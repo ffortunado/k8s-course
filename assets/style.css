@@ -225,6 +225,15 @@ a.route-label:hover { color: var(--ink-text-strong); text-decoration: underline;
 span.route-label { color: var(--ink-text-strong); font-weight: 600; }
 .route-stop.is-locked .route-label { color: var(--ink-text); opacity: 0.45; }
 
+.route-duration {
+  display: block;
+  margin-top: 0.1rem;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 0.72rem;
+  opacity: 0.55;
+}
+
 .route-soon {
   display: block;
   margin-left: 1.75rem;

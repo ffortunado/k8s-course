@@ -12,16 +12,16 @@
  */
 (function () {
   var LESSONS = [
-    { n: 1, slug: "0001-docker-just-enough", title: "Docker ровно настолько", available: true },
-    { n: 2, slug: "0002-minikube-cluster", title: "Первый локальный кластер", available: false },
-    { n: 3, slug: "0003-pod-deployment", title: "Pod и Deployment", available: false },
-    { n: 4, slug: "0004-service", title: "Service", available: false },
-    { n: 5, slug: "0005-configmap-secret", title: "ConfigMap и Secret", available: false },
-    { n: 6, slug: "0006-health-probes", title: "Health-пробы", available: false },
-    { n: 7, slug: "0007-ingress", title: "Ingress", available: false },
-    { n: 8, slug: "0008-scaling-rollouts", title: "Масштабирование и обновления", available: false },
-    { n: 9, slug: "0009-logs-debug", title: "Логи и отладка", available: false },
-    { n: 10, slug: "0010-capstone-real-server", title: "Капстоун: реальный сервер", available: false }
+    { n: 1, slug: "0001-docker-just-enough", title: "Docker ровно настолько", duration: "35–40 мин", available: true },
+    { n: 2, slug: "0002-minikube-cluster", title: "Первый локальный кластер", duration: "30–40 мин", available: false },
+    { n: 3, slug: "0003-pod-deployment", title: "Pod и Deployment", duration: "25–30 мин", available: false },
+    { n: 4, slug: "0004-service", title: "Service", duration: "25–30 мин", available: false },
+    { n: 5, slug: "0005-configmap-secret", title: "ConfigMap и Secret", duration: "30–35 мин", available: false },
+    { n: 6, slug: "0006-health-probes", title: "Health-пробы", duration: "30–35 мин", available: false },
+    { n: 7, slug: "0007-ingress", title: "Ingress", duration: "35–40 мин", available: false },
+    { n: 8, slug: "0008-scaling-rollouts", title: "Масштабирование и обновления", duration: "25–30 мин", available: false },
+    { n: 9, slug: "0009-logs-debug", title: "Логи и отладка", duration: "30–35 мин", available: false },
+    { n: 10, slug: "0010-capstone-real-server", title: "Капстоун: реальный сервер", duration: "60–90 мин", available: false }
   ];
 
   /*
@@ -90,7 +90,12 @@
         label = document.createElement("span");
       }
       label.className = "route-label";
-      label.textContent = lesson.title;
+      label.appendChild(document.createTextNode(lesson.title));
+
+      var duration = document.createElement("span");
+      duration.className = "route-duration";
+      duration.textContent = "(" + lesson.duration + ")";
+      label.appendChild(duration);
 
       li.appendChild(dot);
       li.appendChild(num);
@@ -116,10 +121,23 @@
 
     // On narrow viewports the route list opens collapsed by default so the
     // lesson content isn't pushed below a 10-item list on first paint.
-    // Desktop ignores the open/closed state entirely (CSS unwraps <details>).
     var details = mount.closest("details.route-toggle");
-    if (details && window.matchMedia("(max-width: 899px)").matches) {
+    var desktopQuery = window.matchMedia("(min-width: 900px)");
+    if (details && !desktopQuery.matches) {
       details.removeAttribute("open");
+    }
+
+    // Desktop CSS unwraps <details> visually (display:contents) and hides
+    // the toggle button, but a closed <details> still natively hides its
+    // content regardless of that CSS — the browser doesn't know the summary
+    // is invisible. Without this, closing the list on mobile and then
+    // widening the window leaves the route list stuck invisible with no
+    // way to reopen it. Force it open whenever the viewport crosses into
+    // the desktop breakpoint, since there's no visible toggle there anyway.
+    if (details) {
+      desktopQuery.addEventListener("change", function (e) {
+        if (e.matches) details.setAttribute("open", "");
+      });
     }
   }
 
