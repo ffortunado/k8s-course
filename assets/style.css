@@ -429,16 +429,18 @@ footer.sources {
   color: var(--text-muted);
 }
 
-.sidebar-help {
-  margin: 0;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--ink-line);
+.lesson-help {
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.5;
-  color: var(--ink-text);
+  color: var(--text-muted);
+  background: var(--paper-card);
+  border-left: 2px solid var(--brass);
+  border-radius: 4px;
+  padding: 0.65rem 0.9rem;
+  margin: 0 0 1.8rem;
 }
-.sidebar-help a { color: var(--brass); text-decoration: none; }
-.sidebar-help a:hover { text-decoration: underline; }
+.lesson-help a { color: var(--brass-strong); }
 
 /* ---------- Copy-to-clipboard (assets/copy.js) ---------- */
 
