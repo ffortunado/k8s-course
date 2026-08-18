@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Шпаргалка: Docker для входа в Kubernetes</title>
+<meta name="description" content="Команды CLI и инструкции Dockerfile одним взглядом — справочник к уроку 1 курса Kubernetes на практике.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>10 уроков</span>
+      </summary>
+      <nav id="course-route" data-current="0" data-base="../lessons/"></nav>
+    </details>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Эта шпаргалка — к уроку</span>
+        <a href="../lessons/0001-docker-just-enough.html">← Урок 1: Docker</a>
+      </div>
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Справочник</p>
+      <h1>Docker — шпаргалка перед Kubernetes</h1>
+      <p class="lede">Сжатая выжимка команд и терминов из <a href="../lessons/0001-docker-just-enough.html">урока 1</a>. Держите открытой рядом с терминалом.</p>
+
+      <h2>Термины</h2>
+      <table>
+        <tr><th>Термин</th><th>Что это</th></tr>
+        <tr><td><strong>Образ (image)</strong></td><td>Неизменяемый шаблон: файловая система + метаданные (что запускать). Аналог класса в ООП.</td></tr>
+        <tr><td><strong>Контейнер (container)</strong></td><td>Запущенный (или остановленный) экземпляр образа. Аналог объекта класса.</td></tr>
+        <tr><td><strong>Dockerfile</strong></td><td>Текстовый рецепт сборки образа: набор инструкций по шагам.</td></tr>
+        <tr><td><strong>Registry</strong></td><td>Хранилище образов (напр. Docker Hub) — туда образы пушат, оттуда их тянет Kubernetes.</td></tr>
+        <tr><td><strong>Tag</strong></td><td>Метка версии образа, напр. <code>myapp:1.0</code>. Без тега подставляется <code>latest</code>.</td></tr>
+        <tr><td><strong>Layer (слой)</strong></td><td>Результат одной инструкции Dockerfile. Docker кеширует слои и переиспользует их, пока строка и файлы, от которых она зависит, не изменились.</td></tr>
+        <tr><td><strong>Volume (том)</strong></td><td>Папка с хоста, подключённая внутрь контейнера — переживает удаление контейнера.</td></tr>
+      </table>
+
+      <h2>Команды CLI</h2>
+      <p class="lede" style="font-size:0.85rem;margin-bottom:0.8rem;">Клик по команде — копирует её в буфер обмена.</p>
+      <table>
+        <tr><th>Команда</th><th>Что делает</th></tr>
+        <tr><td><code class="cmd">docker build -t имя:тег .</code></td><td>Собрать образ из Dockerfile в текущей папке</td></tr>
+        <tr><td><code class="cmd">docker images</code></td><td>Список локальных образов</td></tr>
+        <tr><td><code class="cmd">docker run -p 8000:8000 имя:тег</code></td><td>Запустить контейнер, пробросив порт 8000 хоста на 8000 контейнера</td></tr>
+        <tr><td><code class="cmd">docker run -d ...</code></td><td>Запустить в фоне (detached)</td></tr>
+        <tr><td><code class="cmd">docker ps</code></td><td>Список запущенных контейнеров</td></tr>
+        <tr><td><code class="cmd">docker ps -a</code></td><td>Список всех контейнеров, включая остановленные</td></tr>
+        <tr><td><code class="cmd">docker logs имя_контейнера</code></td><td>Посмотреть логи контейнера</td></tr>
+        <tr><td><code class="cmd">docker exec -it имя_контейнера bash</code></td><td>Зайти в работающий контейнер интерактивным шеллом</td></tr>
+        <tr><td><code class="cmd">docker stop имя_контейнера</code></td><td>Остановить контейнер</td></tr>
+        <tr><td><code class="cmd">docker rm имя_контейнера</code></td><td>Удалить остановленный контейнер</td></tr>
+        <tr><td><code class="cmd">docker rmi имя:тег</code></td><td>Удалить образ</td></tr>
+        <tr><td><code class="cmd">docker run --rm -v "$(pwd)":/data alpine ls /data</code></td><td>Подключить текущую папку хоста как том <code>/data</code> внутри контейнера</td></tr>
+      </table>
+
+      <h2>Ключевые инструкции Dockerfile</h2>
+      <table>
+        <tr><th>Инструкция</th><th>Что делает</th></tr>
+        <tr><td><code>FROM</code></td><td>Базовый образ, от которого наследуемся</td></tr>
+        <tr><td><code>WORKDIR</code></td><td>Рабочая директория внутри образа для следующих команд</td></tr>
+        <tr><td><code>COPY</code></td><td>Скопировать файлы с хоста в образ</td></tr>
+        <tr><td><code>RUN</code></td><td>Выполнить команду во время сборки образа (напр. установка зависимостей)</td></tr>
+        <tr><td><code>EXPOSE</code></td><td>Задокументировать, какой порт слушает приложение (не публикует его сам по себе)</td></tr>
+        <tr><td><code>CMD</code></td><td>Команда по умолчанию при запуске контейнера</td></tr>
+      </table>
+
+      <div class="callout">
+        <span class="callout-label">Почему это важно для k8s</span>
+        Kubernetes не собирает образы — он их только запускает. Всё, что вы сейчас учитесь делать через <code>docker build</code> и <code>docker run</code>, в следующих уроках превратится в YAML-описание Pod'а: тот же образ, тот же порт, только вместо ручной команды — декларативный манифест.
+      </div>
+
+      <p><a href="../lessons/0001-docker-just-enough.html">← Урок 1: Docker ровно настолько, насколько нужно</a></p>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>

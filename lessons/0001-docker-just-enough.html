@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 1 · Docker ровно настолько, насколько нужно для Kubernetes</title>
+<meta name="description" content="Образ vs контейнер, Dockerfile, слои и кеш сборки, тома — Docker, необходимый перед входом в Kubernetes, на примере своего образа FastAPI-сервиса.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>1 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="1" data-base=""></nav>
+    </details>
+
+    <p class="sidebar-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/342" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Справочник к этому уроку</span>
+        <a href="../reference/docker-cheatsheet.html">Шпаргалка: Docker перед k8s →</a>
+      </div>
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 01 · Kubernetes на практике</p>
+      <h1>Docker ровно настолько, насколько нужно для Kubernetes</h1>
+      <p class="lede">Kubernetes не запускает код напрямую — он запускает <em>контейнеры</em>. Прежде чем оркестрировать контейнеры, стоит один раз своими руками пройти путь Docker: собрать образ, понять слои и кеш сборки, вынести данные в том. Это единственный урок, который целиком про Docker — дальше те же идеи мы встретим внутри Kubernetes, уже под другими именами.</p>
+
+      <h2>Образ vs контейнер</h2>
+      <p>Два термина, которые часто путают:</p>
+      <ul>
+        <li><strong>Образ (image)</strong> — неизменяемый шаблон: файловая система приложения плюс инструкция, что запускать. Он лежит на диске (или в registry) и ничего не делает сам по себе.</li>
+        <li><strong>Контейнер (container)</strong> — запущенный экземпляр образа. Из одного образа можно запустить сколько угодно контейнеров одновременно.</li>
+      </ul>
+      <p>Аналогия из программирования: образ — это класс, контейнер — объект этого класса. Это ровно то различие, которое дальше будет иметь значение в Kubernetes: манифест Pod'а ссылается на образ, а кластер уже сам создаёт из него запущенные экземпляры.</p>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальное объяснение — <a href="https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-an-image/" target="_blank" rel="noopener">Docker Docs: What is an image?</a> и <a href="https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/" target="_blank" rel="noopener">What is a container?</a>
+      </div>
+
+      <h2>Практика: соберите свой первый образ</h2>
+      <p>Понадобится установленный Docker Desktop (или Docker Engine на Linux) — если ещё не стоит, поставьте по <a href="https://docs.docker.com/get-started/get-docker/" target="_blank" rel="noopener">официальной инструкции</a> под вашу ОС.</p>
+
+      <ol class="steps">
+        <li>
+          Создайте папку <code>hello-fastapi</code>, а в ней файл <code>main.py</code>:
+          <pre><code>from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "Привет из контейнера"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}</code></pre>
+          <p><code>/health</code> — не для украшения: в следующих уроках именно к таким эндпоинтам k8s будет обращаться, проверяя, жив ли ваш сервис.</p>
+        </li>
+        <li>
+          Рядом создайте <code>requirements.txt</code>:
+          <pre><code>fastapi
+uvicorn[standard]</code></pre>
+        </li>
+        <li>
+          И <code>Dockerfile</code> (без расширения):
+          <pre><code>FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY main.py .
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]</code></pre>
+          <p>Читается построчно: взять образ <code>python:3.12-slim</code> → перейти в <code>/app</code> → поставить зависимости → скопировать код → при запуске поднять uvicorn на порту 8000.</p>
+        </li>
+        <li>
+          Соберите образ (точка в конце — собрать из текущей папки):
+          <pre><code>docker build -t hello-fastapi:0.1 .</code></pre>
+        </li>
+        <li>
+          Запустите контейнер, пробросив порт:
+          <pre><code>docker run -p 8000:8000 hello-fastapi:0.1</code></pre>
+        </li>
+        <li>
+          Откройте <a href="http://localhost:8000/docs" target="_blank" rel="noopener">localhost:8000/docs</a> — увидите автосгенерированную страницу FastAPI. Это и есть ваш ощутимый результат урока: код, упакованный в переносимый образ, работает одинаково у вас и на любой другой машине с Docker.
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Что вы только что сделали</span>
+        Именно этот образ (<code>hello-fastapi:0.1</code>) в следующем уроке мы опишем YAML-манифестом и запустим не командой <code>docker run</code>, а через Kubernetes — с автоматическим перезапуском при падении и масштабированием на несколько копий.
+      </div>
+
+      <h2>Слои и кеш сборки: почему порядок в Dockerfile не случаен</h2>
+      <p>Каждая инструкция Dockerfile создаёт отдельный слой (layer). Docker кеширует слои и переиспользует их, если ничего не поменялось <em>с начала файла и до этой строки</em>. Поэтому в нашем Dockerfile <code>COPY requirements.txt</code> и <code>RUN pip install</code> стоят раньше <code>COPY main.py</code> — зависимости меняются редко, а код приложения часто. Если бы порядок был обратным, каждое изменение в <code>main.py</code> заставляло бы Docker заново ставить все зависимости.</p>
+      <p>Проверьте на практике: добавьте в <code>main.py</code> ещё один эндпоинт и пересоберите образ под новым тегом:</p>
+      <pre><code>docker build -t hello-fastapi:0.2 .</code></pre>
+      <p>В выводе шаги с <code>COPY requirements.txt</code> и <code>RUN pip install</code> будут помечены <code>CACHED</code> — Docker не выполнял их заново, потому что эти строки Dockerfile и файл <code>requirements.txt</code> не изменились. Пересобралась только последняя, самая дешёвая часть.</p>
+
+      <h2>Тома (volumes): данные переживают контейнер</h2>
+      <p>Файловая система контейнера живёт ровно столько, сколько сам контейнер. Удалите контейнер — исчезнет всё, что было записано внутри. <strong>Том (volume)</strong> — способ вынести данные наружу: подключить папку с хоста внутрь контейнера, чтобы она пережила и перезапуск, и удаление.</p>
+      <pre><code>docker run --rm -v "$(pwd)":/data alpine ls /data</code></pre>
+      <p>Здесь <code>-v "$(pwd)":/data</code> монтирует текущую папку хоста как <code>/data</code> внутри одноразового контейнера <code>alpine</code> — команда покажет содержимое вашей папки изнутри контейнера. <code>--rm</code> удаляет контейнер сразу после завершения, но данные на хосте, разумеется, остаются.</p>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        <a href="https://docs.docker.com/engine/storage/volumes/" target="_blank" rel="noopener">Docker Docs: Volumes</a>
+      </div>
+
+      <div class="callout win">
+        <span class="callout-label">Задел на будущее</span>
+        Кеш слоёв и тома вы встретите в Kubernetes снова, но в кластерном масштабе: слои остаются заботой Docker, а тома превращаются в <code>Volume</code>/<code>PersistentVolume</code>. Заодно держите в голове: по умолчанию контейнеры друг друга не видят — а в Kubernetes есть <code>Service</code>, который находит нужные Pod'ы по имени автоматически, даже когда их становится много. Как это устроено в Docker вручную, разбирать не будем — сразу увидим версию для кластера в отдельном уроке.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Что из перечисленного правильно описывает связь образа и контейнера?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Контейнер и образ — это два названия одного и того же</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Образ — неизменяемый шаблон, контейнер — его запущенный экземпляр</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Контейнер создаётся раньше образа, образ — результат его сборки</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="docker build -t myapp:1.0 .">
+        <p class="quiz-question">Напишите команду, которая соберёт образ с тегом <code>myapp:1.0</code> из Dockerfile в текущей папке:</p>
+        <input type="text" class="quiz-input" placeholder="docker ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Почему в Dockerfile зависимости ставят до копирования кода приложения?</p>
+        <label class="quiz-option"><input type="radio" name="q3" value="a"> Так требует синтаксис Dockerfile, иначе сборка упадёт с ошибкой</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="b" data-correct="true"> Чтобы Docker кешировал установку зависимостей и не повторял её при каждом изменении кода</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="c"> Чтобы уменьшить итоговый размер образа</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://docs.docker.com/get-started/" target="_blank" rel="noopener">Docker — Get Started guide</a> (официальная документация). Также: <a href="https://fastapi.tiangolo.com/deployment/docker/" target="_blank" rel="noopener">FastAPI in Containers — Docker</a>, <a href="https://docs.docker.com/build/cache/" target="_blank" rel="noopener">Docker Docs: Build cache</a>, <a href="https://docs.docker.com/engine/storage/volumes/" target="_blank" rel="noopener">Docker Docs: Volumes</a>.
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../reference/docker-cheatsheet.html">Шпаргалка: Docker перед k8s →</a></span>
+        <span>Урок 2 (Pod и Deployment) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>

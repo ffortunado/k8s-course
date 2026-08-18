@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kubernetes на практике</title>
+<meta name="description" content="Открытый курс: путь от контейнера до работающего в Kubernetes сервиса, короткими практическими уроками.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>10 уроков</span>
+      </summary>
+      <nav id="course-route" data-current="0" data-base="lessons/"></nav>
+    </details>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Справочник</span>
+        <a href="reference/docker-cheatsheet.html">Шпаргалка: Docker перед k8s →</a>
+      </div>
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Открытый курс</p>
+      <h1>Kubernetes на практике</h1>
+      <p class="lede">Kubernetes не запускает код — он его оркестрирует. Курс проведёт вас от собственноручно собранного Docker-образа до сервиса, который живёт в кластере: с самовосстановлением, масштабированием и настоящим доменным именем. Каждый урок — один вечер, один осязаемый результат.</p>
+
+      <div class="callout">
+        <span class="callout-label">С чего начать</span>
+        <a href="lessons/0001-docker-just-enough.html">Урок 1: Docker ровно настолько, насколько нужно →</a> — если вы уже открывали терминал, но Docker для вас пока чёрный ящик, это отправная точка.
+      </div>
+
+      <h2>Как устроен курс</h2>
+      <p>Слева — проложенный маршрут: десять уроков, каждый опирается на предыдущий. Пройденный и открытый участок пути отмечен сплошной линией, ещё не опубликованные уроки — пунктиром, они появятся по мере того, как я сам прохожу этот путь и записываю его.</p>
+      <p>Курс полностью бесплатный и локальный: единственное, что понадобится — Docker и <a href="https://minikube.sigs.k8s.io/docs/start/" target="_blank" rel="noopener">minikube</a> на вашей машине. Облако появится только в самом последнем, финальном уроке — и то как опция.</p>
+
+      <div class="callout win">
+        <span class="callout-label">Формат</span>
+        Каждый урок — самодостаточная страница: немного теории со ссылкой на официальный источник, практика руками и короткая проверка себя. Ничего не растянуто дольше одного присаживания за компьютер.
+      </div>
+
+      <footer class="sources">
+        Вопросы и разборы — приветствуются в комментариях к урокам.
+      </footer>
+    </article>
+  </main>
+</div>
+<script src="assets/nav.js"></script>
+</body>
+</html>
