@@ -24,6 +24,17 @@
     { n: 10, slug: "0010-capstone-real-server", title: "Капстоун: реальный сервер", available: false }
   ];
 
+  /*
+   * Reference docs — shared, growing companions used across many lessons
+   * (not one-per-lesson). Renders into
+   * <nav id="course-references" data-base="..."></nav>.
+   * Flip `available: true` here when a reference doc ships.
+   */
+  var REFERENCES = [
+    { slug: "docker-cheatsheet", title: "Docker", available: true },
+    { slug: "kubectl-cheatsheet", title: "kubectl и манифесты", available: false }
+  ];
+
   function pad(n) {
     return n < 10 ? "0" + n : String(n);
   }
@@ -112,5 +123,39 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", render);
+  function renderReferences() {
+    var mount = document.getElementById("course-references");
+    if (!mount) return;
+    var base = mount.dataset.base || "";
+
+    var ul = document.createElement("ul");
+    ul.className = "ref-list";
+
+    REFERENCES.forEach(function (ref) {
+      var li = document.createElement("li");
+      if (ref.available) {
+        var a = document.createElement("a");
+        a.href = base + ref.slug + ".html";
+        a.textContent = ref.title;
+        li.appendChild(a);
+      } else {
+        var span = document.createElement("span");
+        span.className = "ref-locked";
+        span.textContent = ref.title;
+        li.appendChild(span);
+        var soon = document.createElement("span");
+        soon.className = "ref-soon";
+        soon.textContent = "скоро";
+        li.appendChild(soon);
+      }
+      ul.appendChild(li);
+    });
+
+    mount.appendChild(ul);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    render();
+    renderReferences();
+  });
 })();

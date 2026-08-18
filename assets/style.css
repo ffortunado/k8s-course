@@ -236,6 +236,49 @@ span.route-label { color: var(--ink-text-strong); font-weight: 600; }
   opacity: 0.35;
 }
 
+.ref-section {
+  padding-top: 1rem;
+  border-top: 1px solid var(--ink-line);
+}
+.ref-heading {
+  margin: 0 0 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-text-strong);
+}
+.ref-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ref-list a {
+  color: var(--ink-text);
+  text-decoration: none;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+}
+.ref-list a:hover { color: var(--brass); }
+.ref-locked {
+  color: var(--ink-text);
+  opacity: 0.45;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+}
+.ref-soon {
+  margin-left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-text);
+  opacity: 0.35;
+}
+
 .chart-footer {
   margin-top: auto;
   padding-top: 1rem;
