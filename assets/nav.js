@@ -13,7 +13,7 @@
 (function () {
   var LESSONS = [
     { n: 1, slug: "0001-docker-just-enough", title: "Docker ровно настолько", duration: "35–40 мин", available: true },
-    { n: 2, slug: "0002-minikube-cluster", title: "Первый локальный кластер", duration: "30–40 мин", available: false },
+    { n: 2, slug: "0002-minikube-cluster", title: "Первый локальный кластер", duration: "30–40 мин", available: true },
     { n: 3, slug: "0003-pod-deployment", title: "Pod и Deployment", duration: "25–30 мин", available: false },
     { n: 4, slug: "0004-service", title: "Service", duration: "25–30 мин", available: false },
     { n: 5, slug: "0005-configmap-secret", title: "ConfigMap и Secret", duration: "30–35 мин", available: false },

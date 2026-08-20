@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 2 · Первый локальный кластер</title>
+<meta name="description" content="Поднимаем свой первый Kubernetes-кластер через minikube: control plane, node, kubectl, панель управления — и как устроен кластер изнутри.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>2 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="2" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 02 · Kubernetes на практике</p>
+      <h1>Первый локальный кластер</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/345" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">В уроке 1 вы запускали контейнер командой <code>docker run</code> — сами, вручную, на своей машине. Сегодня вместо одной машины появится <em>кластер</em>: несколько логических ролей, которые вместе решают, где и как запускать ваши контейнеры, даже если что-то упадёт. Разворачивать целый настоящий кластер ради тренировки дорого и медленно — поэтому мы поднимем его локально через <strong>minikube</strong>, который эмулирует полноценный кластер прямо на ноутбуке.</p>
+
+      <h2>Как устроен кластер</h2>
+      <p>Три роли, которые важно не путать:</p>
+      <ul>
+        <li><strong>Control plane</strong> — «мозг» кластера. Принимает ваши команды через <strong>API Server</strong> и решает, на какой машине что запускать (<strong>Scheduler</strong>). Сам код приложений не выполняет.</li>
+        <li><strong>Node</strong> — рабочая машина (реальная или виртуальная), на которой реально живут контейнеры. На ней работает <strong>kubelet</strong> — агент, который слушает control plane и дёргает знакомый вам по уроку 1 Docker.</li>
+        <li><strong>kubectl</strong> — командная строка, через которую вы разговариваете с API Server. Не с нодой напрямую — всегда через control plane.</li>
+      </ul>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 230" role="img" aria-labelledby="cluster-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="cluster-diagram-title">Схема: kubectl отправляет запрос в control plane, control plane решает, на какой node запустить контейнер</title>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="10" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">ТЕРМИНАЛ</text>
+          <text x="95" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Вы</text>
+          <rect x="30" y="88" width="130" height="28" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="106" text-anchor="middle" class="diagram-note" fill="var(--text)">kubectl get nodes</text>
+          <text x="95" y="150" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="95" dy="0">задаёт вопросы</tspan>
+            <tspan x="95" dy="16">кластеру</tspan>
+          </text>
+
+          <line x1="184" y1="115" x2="256" y2="115" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow)"></line>
+          <text x="220" y="102" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">запрос</text>
+
+          <rect x="260" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="345" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">CONTROL PLANE</text>
+          <text x="345" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Мозг кластера</text>
+          <rect x="280" y="88" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="345" y="105" text-anchor="middle" class="diagram-note" fill="var(--text)">API Server</text>
+          <rect x="280" y="122" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="345" y="139" text-anchor="middle" class="diagram-note" fill="var(--text)">Scheduler</text>
+          <text x="345" y="175" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="345" dy="0">сам код не</tspan>
+            <tspan x="345" dy="16">выполняет</tspan>
+          </text>
+
+          <line x1="434" y1="115" x2="506" y2="115" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow)"></line>
+          <text x="470" y="102" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">куда?</text>
+
+          <rect x="510" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">NODE</text>
+          <text x="595" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Рабочая машина</text>
+          <rect x="530" y="88" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="105" text-anchor="middle" class="diagram-note" fill="var(--text)">kubelet</text>
+          <rect x="530" y="122" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="139" text-anchor="middle" class="diagram-note" fill="var(--text)">Docker (урок 1)</text>
+          <text x="595" y="175" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="595" dy="0">здесь реально</tspan>
+            <tspan x="595" dy="16">живут контейнеры</tspan>
+          </text>
+        </svg>
+        <figcaption>minikube эмулирует все три роли на одной вашей машине — но логически они остаются раздельными, ровно как в настоящем многомашинном кластере</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная схема архитектуры — <a href="https://kubernetes.io/docs/concepts/overview/components/" target="_blank" rel="noopener">Kubernetes Docs: Components</a>
+      </div>
+
+      <h2>Практика: поднимите свой кластер</h2>
+      <p>Понадобится всё тот же Docker из урока 1 (minikube по умолчанию использует его как драйвер) плюс два новых инструмента.</p>
+
+      <ol class="steps">
+        <li>
+          Поставьте <code>kubectl</code> — командную строку Kubernetes — по <a href="https://kubernetes.io/docs/tasks/tools/#kubectl" target="_blank" rel="noopener">официальной инструкции</a> под вашу ОС.
+        </li>
+        <li>
+          Поставьте <code>minikube</code> по <a href="https://minikube.sigs.k8s.io/docs/start/" target="_blank" rel="noopener">официальной инструкции</a>.
+        </li>
+        <li>
+          Запустите кластер (при первом запуске minikube скачает образ узла — может занять несколько минут в зависимости от интернета):
+          <pre><code>minikube start</code></pre>
+        </li>
+        <li>
+          Проверьте, что node действительно появилась и готова:
+          <pre><code>kubectl get nodes</code></pre>
+          <p>В колонке <code>STATUS</code> должно быть <code>Ready</code>. Это и есть та самая «рабочая машина» из схемы выше — просто она виртуальная и живёт внутри Docker на вашем компьютере.</p>
+        </li>
+        <li>
+          Спросите control plane, из чего он состоит:
+          <pre><code>kubectl cluster-info</code></pre>
+        </li>
+        <li>
+          Откройте графическую панель кластера — она покажет то же самое, что вы будете видеть командами, но наглядно:
+          <pre><code>minikube dashboard</code></pre>
+          Откроется браузер с веб-интерфейсом. Пока там пусто — в следующем уроке появится первый Pod, и вы увидите его прямо здесь.
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Что вы только что сделали</span>
+        У вас теперь есть настоящий, живой Kubernetes-кластер — пусть и однонодовый, локальный. <code>kubectl get nodes</code> и <code>kubectl cluster-info</code> — это первые две команды, которые вы будете набирать машинально в каждом следующем уроке: первая проверяет, жив ли кластер, вторая — с чем вы вообще разговариваете.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Опытные пользователи k8s почти никогда не набирают <code>kubectl</code> целиком. Добавьте в профиль своей оболочки алиас <code>alias k=kubectl</code> и включите автодополнение команд — например, для bash: <code>source &lt;(kubectl completion bash)</code> (свой вариант для zsh/fish есть в <code>kubectl completion --help</code>). Десять секунд настройки — и вы будете экономить время на каждой команде до конца курса.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Какая часть кластера решает, на какой node запустить ваш контейнер?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> kubectl, прямо с вашего компьютера</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Control plane (API Server + Scheduler)</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> kubelet на самой node</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="minikube start">
+        <p class="quiz-question">Напишите команду, которая запустит локальный кластер minikube:</p>
+        <input type="text" class="quiz-input" placeholder="minikube ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get nodes">
+        <p class="quiz-question">Напишите команду, которая покажет список node в кластере и их статус:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://minikube.sigs.k8s.io/docs/start/" target="_blank" rel="noopener">minikube — Get Started</a> и <a href="https://kubernetes.io/docs/concepts/overview/components/" target="_blank" rel="noopener">Kubernetes Docs: Components</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0001-docker-just-enough.html">← Урок 1: Docker</a></span>
+        <span>Урок 3 (Pod и Deployment) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
