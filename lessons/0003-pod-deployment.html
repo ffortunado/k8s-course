@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 3 · Pod и Deployment</title>
+<meta name="description" content="Разворачиваем свой FastAPI-образ в кластере: чем Pod отличается от Deployment, зачем нужен ReplicaSet и как Kubernetes сам чинит упавшие контейнеры.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>3 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="3" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 03 · Kubernetes на практике</p>
+      <h1>Pod и Deployment</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/346" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">У вас уже есть образ <code>hello-fastapi:0.1</code> из урока 1 и живой кластер из урока 2. Пора соединить их вместе — но не командой <code>docker run</code>, а декларативно, как это делает Kubernetes. Для этого понадобятся два новых объекта: <strong>Pod</strong>, самая маленькая единица запуска, и <strong>Deployment</strong>, который этими Pod'ами управляет и не даёт им бесследно исчезать.</p>
+
+      <h2>Pod — не то же самое, что контейнер</h2>
+      <p>Pod — минимальная единица, которую вообще можно запустить в Kubernetes. Формально он может объединять несколько контейнеров с общей сетью и диском, но на практике в 90% случаев внутри Pod'а — один контейнер. Тогда зачем вообще эта обёртка, если можно было просто запускать контейнеры?</p>
+      <ul>
+        <li><strong>Pod эфемерен по своей природе.</strong> Kubernetes не «чинит» упавший Pod — он его выбрасывает и создаёт новый, с новым именем и новым IP. Это осознанный контракт, а не баг.</li>
+        <li><strong>Голый Pod, созданный вручную, никто не пересоздаст.</strong> Уроните узел, на котором он жил, — и Pod просто исчезнет вместе с ним. Никто не заметит и не восстановит.</li>
+        <li>Именно поэтому Pod'ы почти никогда не создают напрямую — их создаёт объект уровнем выше, который следит, чтобы нужное количество Pod'ов существовало <em>всегда</em>.</li>
+      </ul>
+
+      <h2>Deployment и ReplicaSet: кто на самом деле следит за Pod'ами</h2>
+      <p>Deployment — это декларация желаемого состояния: «я хочу, чтобы работало N копий вот такого контейнера». Сам Deployment Pod'ами не занимается — он создаёт под собой <strong>ReplicaSet</strong>, а уже ReplicaSet непрерывно сверяет факт с желаемым числом и досоздаёт Pod'ы, если их стало меньше.</p>
+      <p>Deployment добавляет поверх ReplicaSet ещё одну важную вещь — управляемые обновления: когда вы меняете образ в манифесте, Deployment создаёт новый ReplicaSet и постепенно переключает трафик на него, не роняя сервис целиком. Это тема отдельного урока про rollout, но само разделение обязанностей стоит запомнить сейчас.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 230" role="img" aria-labelledby="deploy-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="deploy-diagram-title">Схема: Deployment описывает желаемое состояние, ReplicaSet поддерживает нужное число Pod'ов, Pod'ы — это реально работающие контейнеры</title>
+          <defs>
+            <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="10" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">МАНИФЕСТ</text>
+          <text x="95" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Deployment</text>
+          <rect x="30" y="88" width="130" height="28" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="106" text-anchor="middle" class="diagram-note" fill="var(--text)">replicas: 2</text>
+          <text x="95" y="150" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="95" dy="0">желаемое</tspan>
+            <tspan x="95" dy="16">состояние</tspan>
+          </text>
+
+          <line x1="184" y1="115" x2="256" y2="115" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow3)"></line>
+          <text x="220" y="102" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">создаёт</text>
+
+          <rect x="260" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="345" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">КОНТРОЛЁР</text>
+          <text x="345" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">ReplicaSet</text>
+          <rect x="280" y="88" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="345" y="105" text-anchor="middle" class="diagram-note" fill="var(--text)">текущих: 2/2</text>
+          <text x="345" y="150" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="345" dy="0">сверяет и</tspan>
+            <tspan x="345" dy="16">чинит разницу</tspan>
+          </text>
+
+          <line x1="434" y1="115" x2="506" y2="115" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow3)"></line>
+          <text x="470" y="102" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">держит</text>
+
+          <rect x="510" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">POD × 2</text>
+          <text x="595" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Ваш контейнер</text>
+          <rect x="530" y="86" width="130" height="24" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="102" text-anchor="middle" class="diagram-note" fill="var(--text)">hello-fastapi #1</text>
+          <rect x="530" y="118" width="130" height="24" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="134" text-anchor="middle" class="diagram-note" fill="var(--text)">hello-fastapi #2</text>
+          <text x="595" y="172" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="595" dy="0">упадёт один —</tspan>
+            <tspan x="595" dy="16">появится новый</tspan>
+          </text>
+        </svg>
+        <figcaption>Вы правите только Deployment. ReplicaSet и Pod'ы — это исполнительный слой, с которым вы работаете лишь для диагностики.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://kubernetes.io/docs/concepts/workloads/pods/" target="_blank" rel="noopener">Kubernetes Docs: Pods</a> и <a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/" target="_blank" rel="noopener">Kubernetes Docs: Deployments</a>
+      </div>
+
+      <h2>Практика: задеплойте свой FastAPI-образ</h2>
+      <p>Понадобится образ <code>hello-fastapi:0.1</code>, собранный в уроке 1, и кластер minikube из урока 2.</p>
+
+      <ol class="steps">
+        <li>
+          Проверьте, что образ действительно есть локально:
+          <pre><code>docker images | grep hello-fastapi</code></pre>
+          Если пусто — вернитесь в папку с <code>Dockerfile</code> из урока 1 и соберите его: <code>docker build -t hello-fastapi:0.1 .</code>
+        </li>
+        <li>
+          minikube по умолчанию не видит образы вашего локального Docker — у него свой собственный. Загрузите образ внутрь кластера явно:
+          <pre><code>minikube image load hello-fastapi:0.1</code></pre>
+          Это разовая операция для каждой новой версии образа — реальный registry (Docker Hub и подобные) появится в курсе позже и снимет это неудобство.
+        </li>
+        <li>
+          Создайте файл <code>deployment.yaml</code>:
+          <pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-fastapi
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-fastapi
+  template:
+    metadata:
+      labels:
+        app: hello-fastapi
+    spec:
+      containers:
+        - name: hello-fastapi
+          image: hello-fastapi:0.1
+          ports:
+            - containerPort: 8000</code></pre>
+          <p><code>selector.matchLabels</code> и <code>template.metadata.labels</code> должны совпадать буквально — этой парой ярлыков ReplicaSet находит «свои» Pod'ы среди всех остальных в кластере.</p>
+        </li>
+        <li>
+          Примените манифест:
+          <pre><code>kubectl apply -f deployment.yaml</code></pre>
+        </li>
+        <li>
+          Проверьте, что получилось на каждом уровне схемы выше:
+          <pre><code>kubectl get deployments
+kubectl get pods</code></pre>
+          В <code>STATUS</code> у Pod'ов должно быть <code>Running</code>, а в <code>READY</code> у Deployment — <code>2/2</code>.
+        </li>
+        <li>
+          Пробросьте порт одного из Pod'ов на свою машину и откройте знакомую страницу:
+          <pre><code>kubectl port-forward deployment/hello-fastapi 8000:8000</code></pre>
+          Откройте <a href="http://localhost:8000/docs" target="_blank" rel="noopener">localhost:8000/docs</a> — тот же интерфейс, что в уроке 1, но теперь за ним стоит кластер, а не одиночный <code>docker run</code>. Остановите проброс сочетанием <kbd>Ctrl+C</kbd>, когда закончите.
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Проверьте самовосстановление</span>
+        Откройте вывод <code>kubectl get pods</code>, скопируйте имя любого Pod'а и удалите его:
+        <pre><code>kubectl delete pod &lt;имя-pod&gt;</code></pre>
+        Сразу выполните <code>kubectl get pods</code> ещё раз — вы увидите, что удалённый Pod пропал, но тут же появился новый с другим именем, а общее число снова стало равно <code>2</code>. Это и есть работа ReplicaSet из схемы выше: он не спрашивает, почему Pod исчез, — просто восстанавливает заявленное число.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Даже если вам нужна ровно одна копия сервиса, не создавайте голый Pod — оберните его в Deployment с <code>replicas: 1</code>. Он почти ничего не стоит по ресурсам, зато при падении узла или самого Pod'а кластер восстановит его автоматически. Голый Pod в такой ситуации просто исчезнет навсегда.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Вы вручную удалили один из двух Pod'ов, созданных Deployment'ом. Что произойдёт дальше?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Ничего — Pod'ов останется один, пока вы не создадите новый вручную</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> ReplicaSet заметит нехватку и создаст новый Pod взамен удалённого</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Deployment остановит второй Pod, чтобы вернуться к согласованному состоянию</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl apply -f deployment.yaml">
+        <p class="quiz-question">Напишите команду, которая применит манифест <code>deployment.yaml</code> к кластеру:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get pods">
+        <p class="quiz-question">Напишите команду, которая покажет список Pod'ов и их статус:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/workloads/pods/" target="_blank" rel="noopener">Kubernetes Docs: Pods</a> и <a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/" target="_blank" rel="noopener">Kubernetes Docs: Deployments</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0002-minikube-cluster.html">← Урок 2: Первый локальный кластер</a></span>
+        <span>Урок 4 (Service) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
