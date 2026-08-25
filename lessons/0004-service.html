@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 4 · Service</title>
+<meta name="description" content="Почему у Pod'а нельзя доверять IP-адресу, как Service даёт стабильный адрес и распределяет трафик между репликами — и как достучаться до сервиса из браузера через minikube.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>4 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="4" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 04 · Kubernetes на практике</p>
+      <h1>Service</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/348" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">В уроке 3 вы удаляли Pod и видели, как ReplicaSet создаёт новый взамен — с другим именем и, важно, с другим IP-адресом. Пока вы обращались к нему через <code>kubectl port-forward</code>, это было незаметно. Но что если к вашему сервису должен обращаться кто-то другой — другой Pod, или вы сами из браузера — и делать это не разово, а постоянно? Адрес, который меняется при каждом перезапуске, для этого не годится. Нужен <strong>Service</strong> — стабильный адрес, который не меняется никогда, сколько бы Pod'ов ни падало и пересоздавалось за ним.</p>
+
+      <h2>Зачем нужен Service</h2>
+      <p>У Service две задачи одновременно:</p>
+      <ul>
+        <li><strong>Стабильный адрес.</strong> IP самого Service не меняется всё время его существования — в отличие от IP отдельных Pod'ов, которые эфемерны по определению (см. урок 3).</li>
+        <li><strong>Балансировка нагрузки.</strong> Если за Service стоит два Pod'а, как в нашем Deployment из урока 3, — Service сам решает, какому из них отдать очередной запрос, а вызывающему об этом думать не нужно вовсе.</li>
+      </ul>
+      <p>Находит «свои» Pod'ы Service точно так же, как ReplicaSet в прошлом уроке — через <strong>label selector</strong>. Тот же принцип, только на этот раз ярлыки сопоставляет не контроллер, а сетевой объект.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 230" role="img" aria-labelledby="svc-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="svc-diagram-title">Схема: запрос идёт на стабильный адрес Service, а он распределяет его между двумя Pod'ами по label selector</title>
+          <defs>
+            <marker id="arrow4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="10" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">ОТКУДА-ТО</text>
+          <text x="95" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Клиент</text>
+          <rect x="30" y="88" width="130" height="28" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="95" y="106" text-anchor="middle" class="diagram-note" fill="var(--text)">браузер / Pod</text>
+          <text x="95" y="150" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="95" dy="0">не знает,</tspan>
+            <tspan x="95" dy="16">сколько Pod'ов</tspan>
+          </text>
+
+          <line x1="184" y1="115" x2="256" y2="115" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow4)"></line>
+          <text x="220" y="102" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">стабильный IP</text>
+
+          <rect x="260" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="345" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">СЕТЬ</text>
+          <text x="345" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Service</text>
+          <rect x="280" y="88" width="130" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="345" y="105" text-anchor="middle" class="diagram-note" fill="var(--text)">app: hello-fastapi</text>
+          <text x="345" y="150" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="345" dy="0">выбирает,</tspan>
+            <tspan x="345" dy="16">кому отдать</tspan>
+          </text>
+
+          <line x1="434" y1="105" x2="506" y2="85" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow4)"></line>
+          <line x1="434" y1="125" x2="506" y2="145" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow4)"></line>
+
+          <rect x="510" y="15" width="170" height="200" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="42" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">POD × 2</text>
+          <text x="595" y="70" text-anchor="middle" class="diagram-title" fill="var(--text)">Ваш контейнер</text>
+          <rect x="530" y="86" width="130" height="24" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="102" text-anchor="middle" class="diagram-note" fill="var(--text)">hello-fastapi #1</text>
+          <rect x="530" y="118" width="130" height="24" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="595" y="134" text-anchor="middle" class="diagram-note" fill="var(--text)">hello-fastapi #2</text>
+          <text x="595" y="172" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">
+            <tspan x="595" dy="0">IP этих двух</tspan>
+            <tspan x="595" dy="16">клиенту не важен</tspan>
+          </text>
+        </svg>
+        <figcaption>Клиент всегда обращается к одному и тому же адресу Service — какой конкретно Pod ответит и сколько их вообще, решает сам Kubernetes.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Как это устроено изнутри</span>
+        На каждой Node фоново работает <strong>kube-proxy</strong> — он следит за всеми Service в кластере и обновляет сетевые правила так, чтобы трафик на адрес Service прозрачно уходил на один из подходящих по label selector Pod'ов. Разбирать сами правила незачем — но полезно понимать, что «стабильный адрес» не магия, а обычный сетевой агент, работающий на каждой ноде.
+      </div>
+
+      <h2>ClusterIP и NodePort</h2>
+      <p>У Service есть несколько типов — в этом уроке нужны только два:</p>
+      <ul>
+        <li><strong>ClusterIP</strong> (по умолчанию) — адрес виден только изнутри кластера. Это основной способ, которым один Pod находит другой: в лоб, по IP, Pod'ы друг с другом никогда не говорят.</li>
+        <li><strong>NodePort</strong> — то же самое, что ClusterIP, плюс сервис дополнительно открывается на отдельном порту каждой Node, то есть становится доступен снаружи кластера. Через него мы и заглянем в свой сервис из браузера.</li>
+      </ul>
+      <p>Полноценный внешний доступ по-настоящему принято настраивать через отдельный объект <strong>Ingress</strong> — он будет в уроке 7. NodePort сейчас — учебный короткий путь, чтобы своими глазами увидеть работающую балансировку, не забегая вперёд.</p>
+
+      <h2>Практика: откройте сервис через стабильный адрес</h2>
+      <p>Deployment из урока 3 (<code>hello-fastapi</code>, 2 реплики) должен быть уже запущен — проверьте: <code>kubectl get pods</code>.</p>
+
+      <ol class="steps">
+        <li>
+          Создайте файл <code>service.yaml</code>:
+          <pre><code>apiVersion: v1
+kind: Service
+metadata:
+  name: hello-fastapi
+spec:
+  type: NodePort
+  selector:
+    app: hello-fastapi
+  ports:
+    - port: 8000
+      targetPort: 8000</code></pre>
+          <p><code>selector</code> здесь — тот же ярлык <code>app: hello-fastapi</code>, что вы указывали в Deployment из урока 3. Service найдёт по нему оба Pod'а автоматически.</p>
+        </li>
+        <li>
+          Примените манифест:
+          <pre><code>kubectl apply -f service.yaml</code></pre>
+        </li>
+        <li>
+          Посмотрите, что получилось:
+          <pre><code>kubectl get services</code></pre>
+          У <code>hello-fastapi</code> появится свой <code>CLUSTER-IP</code> — тот самый стабильный адрес — и в колонке <code>PORT(S)</code> будет виден дополнительный NodePort вида <code>8000:3XXXX/TCP</code>.
+        </li>
+        <li>
+          minikube умеет сам находить правильный адрес и порт для NodePort-сервиса — не нужно искать их вручную:
+          <pre><code>minikube service hello-fastapi --url</code></pre>
+          Откройте полученный адрес с припиской <code>/docs</code> в браузере. Это тот же интерфейс FastAPI, что и раньше, — но теперь вы обращаетесь не к конкретному Pod'у напрямую, а к Service.
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Проверьте стабильность адреса</span>
+        Откройте <code>kubectl get pods</code>, удалите любой из двух Pod'ов (<code>kubectl delete pod &lt;имя&gt;</code>) и, не меняя ничего, обновите страницу <code>/docs</code> в браузере ещё раз. Она продолжит отвечать — хотя один из Pod'ов позади Service только что был полностью заменён на новый, с другим IP. В уроке 3 для этого пришлось бы заново набирать <code>kubectl port-forward</code> — команда была привязана к конкретному Pod'у. Service от такой привязки не страдает в принципе.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Если один Pod вашего приложения захочет обратиться к другому сервису внутри кластера — например, к базе данных, поднятой отдельным Deployment'ом, — никогда не прописывайте IP Pod'а в коде или конфиге. Обращайтесь по имени Service (<code>hello-fastapi</code>, как в этом уроке) — Kubernetes сам резолвит его через встроенный DNS в актуальный адрес, даже если Pod'ы внутри полностью пересоздались.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Зачем нужен Service, если у Deployment уже есть Pod'ы, которые он поддерживает?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Deployment без Service вообще не может создавать Pod'ы</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Service даёт стабильный адрес и распределяет трафик между Pod'ами, чьи IP постоянно меняются</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Service нужен только для доступа из браузера снаружи кластера</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl apply -f service.yaml">
+        <p class="quiz-question">Напишите команду, которая применит манифест <code>service.yaml</code> к кластеру:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="minikube service hello-fastapi --url">
+        <p class="quiz-question">Напишите команду, которая выдаст доступный извне URL для NodePort-сервиса <code>hello-fastapi</code> в minikube:</p>
+        <input type="text" class="quiz-input" placeholder="minikube ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/services-networking/service/" target="_blank" rel="noopener">Kubernetes Docs: Service</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0003-pod-deployment.html">← Урок 3: Pod и Deployment</a></span>
+        <span>Урок 5 (ConfigMap и Secret) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
