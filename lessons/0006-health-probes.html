@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 6 · Health-пробы</title>
+<meta name="description" content="Liveness и readiness пробы: чем перезапуск контейнера отличается от исключения из Service, и как настроить обе проверки на примере FastAPI-эндпоинта /health.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>6 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="6" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 06 · Kubernetes на практике</p>
+      <h1>Health-пробы</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/354" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">В уроке 3 ReplicaSet чинил Pod, только когда тот исчезал целиком. Но что если процесс внутри контейнера жив, отвечает на TCP-уровне, а сам при этом завис намертво или ещё не успел прогреться после старта? Снаружи для Kubernetes это выглядит как совершенно здоровый Pod. <code>/health</code>-эндпоинт, который вы добавили ещё в уроке 1 «на будущее», — и есть ответ на эту проблему: он даёт кластеру способ спросить приложение напрямую, а не гадать по факту существования процесса.</p>
+
+      <h2>Liveness и readiness — разные пробы, разные действия</h2>
+      <p>Пробы бывают нескольких видов, но в этом уроке важны две, и путать их — самая частая ошибка новичков:</p>
+      <ul>
+        <li><strong>Liveness-проба</strong> отвечает на вопрос «процесс вообще жив?». Если несколько проверок подряд проваливаются, <strong>kubelet перезапускает контейнер</strong> внутри того же Pod'а — это отдельный, более быстрый механизм самовосстановления, чем пересоздание всего Pod'а через ReplicaSet из урока 3.</li>
+        <li><strong>Readiness-проба</strong> отвечает на другой вопрос — «готов ли Pod принимать трафik <em>прямо сейчас</em>?». Если она проваливается, никто ничего не перезапускает — Kubernetes просто временно убирает Pod из списка адресов Service (урок 4), пока проба снова не станет успешной.</li>
+      </ul>
+      <p>Итого: liveness лечит зависшие процессы перезапуском, readiness защищает пользователей от Pod'а, который жив, но не готов отвечать — например, ещё не подключился к базе при старте.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 230" role="img" aria-labelledby="probe-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="probe-diagram-title">Схема: один и тот же провал /health приводит к двум разным реакциям — перезапуску от liveness и исключению из Service от readiness</title>
+          <defs>
+            <marker id="arrow6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="10" y="55" width="200" height="120" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="110" y="80" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">POD</text>
+          <text x="110" y="105" text-anchor="middle" class="diagram-title" fill="var(--text)">/health</text>
+          <rect x="30" y="120" width="160" height="26" rx="5" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="110" y="138" text-anchor="middle" class="diagram-note" fill="var(--text)">HTTP 500</text>
+          <text x="110" y="165" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">сломан вручную</text>
+
+          <line x1="212" y1="90" x2="388" y2="55" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow6)"></line>
+          <line x1="212" y1="140" x2="388" y2="175" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow6)"></line>
+
+          <rect x="390" y="15" width="300" height="80" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="540" y="38" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">LIVENESS ПРОВАЛЕНА</text>
+          <text x="540" y="60" text-anchor="middle" class="diagram-title" fill="var(--text)">kubelet перезапускает контейнер</text>
+          <text x="540" y="82" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">через несколько неудач подряд</text>
+
+          <rect x="390" y="135" width="300" height="80" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="540" y="158" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">READINESS ПРОВАЛЕНА</text>
+          <text x="540" y="180" text-anchor="middle" class="diagram-title" fill="var(--text)">Pod исключён из Service</text>
+          <text x="540" y="202" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">контейнер продолжает жить</text>
+        </svg>
+        <figcaption>Один и тот же неудачный ответ <code>/health</code> запускает две независимые реакции с разной скоростью и разными последствиями.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/" target="_blank" rel="noopener">Kubernetes Docs: Configure Liveness, Readiness and Startup Probes</a>
+      </div>
+
+      <h2>Практика: сломайте сервис руками и понаблюдайте за реакцией</h2>
+      <p>Понадобится Deployment из урока 3 (2 реплики) и Service из урока 4.</p>
+
+      <ol class="steps">
+        <li>
+          Обновите <code>main.py</code> из урока 1: добавьте флаг, который можно включить снаружи, и эндпоинт, который его переключает.
+          <pre><code>from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
+
+UNHEALTHY = False
+
+@app.get("/health")
+def health():
+    if UNHEALTHY:
+        raise HTTPException(status_code=500, detail="сломано специально")
+    return {"status": "ok"}
+
+@app.post("/break")
+def break_health():
+    global UNHEALTHY
+    UNHEALTHY = True
+    return {"status": "теперь /health будет отвечать ошибкой"}</code></pre>
+          <p>Первую строку и функцию <code>app = FastAPI()</code> замените целиком — остальной код (<code>/</code> и старый <code>/health</code>) из урока 1 не трогайте, просто допишите тело <code>/health</code> и новый эндпоинт <code>/break</code>.</p>
+        </li>
+        <li>
+          Пересоберите образ и загрузите его в minikube:
+          <pre><code>docker build -t hello-fastapi:0.3 .
+minikube image load hello-fastapi:0.3</code></pre>
+        </li>
+        <li>
+          В <code>deployment.yaml</code> обновите тег образа на <code>0.3</code> и добавьте обе пробы к контейнеру:
+          <pre><code>containers:
+  - name: hello-fastapi
+    image: hello-fastapi:0.3
+    ports:
+      - containerPort: 8000
+    envFrom:
+      - configMapRef:
+          name: hello-fastapi-config
+      - secretRef:
+          name: hello-fastapi-secret
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 1</code></pre>
+          <p>Обе пробы стучатся в один и тот же <code>/health</code>, но с разным <code>failureThreshold</code>: readiness реагирует на первую же неудачу, liveness ждёт три подряд — поэтому их эффекты будет видно по отдельности, с разницей в несколько секунд.</p>
+        </li>
+        <li>
+          Примените манифест и дождитесь обновления:
+          <pre><code>kubectl apply -f deployment.yaml
+kubectl rollout status deployment/hello-fastapi</code></pre>
+        </li>
+        <li>
+          Получите адрес сервиса, как в уроке 4, и сломайте здоровье одной из двух реплик:
+          <pre><code>URL=$(minikube service hello-fastapi --url)
+curl -X POST "$URL/break"</code></pre>
+          <p>Реплик две, а Service выбирает, кому отдать запрос, — так что <code>/break</code> с большой вероятностью попадёт только в одну из них. Вторая продолжит как ни в чём не бывало.</p>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Понаблюдайте за обоими эффектами</span>
+        Сразу после <code>/break</code> запустите:
+        <pre><code>kubectl get pods --watch</code></pre>
+        Через несколько секунд у одного из Pod'ов <code>READY</code> кратковременно станет <code>0/1</code> — это сработала readiness-проба, и Service перестал слать туда трафик. Ещё через несколько секунд у того же Pod'а вырастет счётчик <code>RESTARTS</code>, а <code>READY</code> вернётся к <code>1/1</code> — это уже liveness: kubelet перезапустил контейнер, и вместе с новым процессом флаг <code>UNHEALTHY</code> сам сбросился в исходное состояние. Остановите наблюдение сочетанием <kbd>Ctrl+C</kbd>.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Не делайте liveness-пробу слишком «умной» — не проверяйте в ней соединение с базой данных или сторонним API. Если внешняя зависимость на минуту зависнет, liveness начнёт валиться у всех ваших Pod'ов одновременно, и kubelet зациклится в перезапусках процесса, который сам по себе ни в чём не виноват. Liveness должен проверять только сам процесс; связи с внешним миром — забота readiness или отдельной логики приложения.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Readiness-проба несколько раз подряд возвращает ошибку. Что произойдёт?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> kubelet сразу перезапустит контейнер</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Pod временно уберут из Service, но контейнер не тронут</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> ReplicaSet создаст ещё один Pod в дополнение к сломанному</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl apply -f deployment.yaml">
+        <p class="quiz-question">Напишите команду, которая применит обновлённый <code>deployment.yaml</code> с пробами:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get pods --watch">
+        <p class="quiz-question">Напишите команду, которая будет непрерывно показывать изменения статуса Pod'ов в реальном времени:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/" target="_blank" rel="noopener">Kubernetes Docs: Configure Liveness, Readiness and Startup Probes</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0005-configmap-secret.html">← Урок 5: ConfigMap и Secret</a></span>
+        <span>Урок 7 (Ingress) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
