@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 7 · Ingress</title>
+<meta name="description" content="Ingress: как заменить случайный NodePort-порт нормальным доменным именем, чем правила Ingress отличаются от Ingress-контроллера и как поднять всё это в minikube.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>7 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="7" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 07 · Kubernetes на практике</p>
+      <h1>Ingress</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">Service из урока 4 дал стабильный адрес внутри кластера, а снаружи — что-то вроде <code>192.168.49.2:31742</code>. Порт случайный, выдан кластером, и на каждый новый сервис будет свой такой же. Никто не пускает пользователей в интернет по такому адресу: снаружи нужны имена (<code>shop.example.com</code>), пути (<code>/api</code>, <code>/admin</code>) и HTTPS — и всё это на одном-единственном входе. Такой вход в Kubernetes называется <strong>Ingress</strong>.</p>
+
+      <h2>Ingress — это правила. Исполняет их контроллер</h2>
+      <p>Здесь спотыкаются почти все, кто пробует Ingress впервые: вы пишете манифест, применяете его, <code>kubectl get ingress</code> показывает объект — а по адресу ничего не отвечает. Дело в том, что <strong>Ingress сам по себе ничего не делает</strong>. Это просто запись в базе кластера вида «запросы к хосту <code>hello.local</code> отправляй в Service <code>hello-fastapi</code>».</p>
+      <p>Чтобы правила заработали, в кластере должен жить <strong>Ingress-контроллер</strong> — обычный Pod с настоящим веб-сервером внутри (чаще всего nginx). Он следит за всеми объектами Ingress, на лету превращает их в свой конфиг и принимает трафик снаружи. Разделение труда простое:</p>
+      <ul>
+        <li><strong>Ingress</strong> (объект, который пишете вы) — <em>что</em> куда маршрутизировать: хост, путь, целевой Service и его порт.</li>
+        <li><strong>Ingress-контроллер</strong> (компонент, который ставится в кластер один раз) — <em>кто</em> эти правила исполняет и держит на себе внешний вход.</li>
+      </ul>
+      <p>В обычном кластере контроллер ставят администраторы; в minikube он включается одной командой-аддоном — это и сделаем в практике.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 250" role="img" aria-labelledby="ingress-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="ingress-diagram-title">Схема: браузер обращается к hello.local, Ingress-контроллер сверяется с правилами Ingress и направляет запрос в Service, который раздаёт его Pod'ам</title>
+          <defs>
+            <marker id="arrow7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="8" y="85" width="128" height="74" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="72" y="110" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">БРАУЗЕР</text>
+          <text x="72" y="133" text-anchor="middle" class="diagram-title" fill="var(--text)">hello.local</text>
+
+          <line x1="138" y1="122" x2="208" y2="122" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow7)"></line>
+
+          <rect x="210" y="40" width="180" height="164" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="300" y="64" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">INGRESS-КОНТРОЛЛЕР</text>
+          <text x="300" y="86" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">nginx внутри кластера</text>
+          <rect x="228" y="102" width="144" height="86" rx="6" fill="var(--paper)" stroke="var(--paper-line)"></rect>
+          <text x="300" y="122" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">правила Ingress</text>
+          <text x="300" y="145" text-anchor="middle" class="diagram-note" fill="var(--text)">host: hello.local</text>
+          <text x="300" y="166" text-anchor="middle" class="diagram-note" fill="var(--text)">path: /</text>
+          <text x="300" y="182" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">→ hello-fastapi:8000</text>
+
+          <line x1="392" y1="122" x2="462" y2="122" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow7)"></line>
+
+          <rect x="464" y="85" width="118" height="74" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="523" y="110" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">SERVICE</text>
+          <text x="523" y="133" text-anchor="middle" class="diagram-title" fill="var(--text)">hello-fastapi</text>
+
+          <line x1="584" y1="110" x2="628" y2="72" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arrow7)"></line>
+          <line x1="584" y1="134" x2="628" y2="172" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arrow7)"></line>
+
+          <rect x="630" y="46" width="62" height="44" rx="8" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="661" y="73" text-anchor="middle" class="diagram-note" fill="var(--text)">Pod #1</text>
+          <rect x="630" y="154" width="62" height="44" rx="8" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="661" y="181" text-anchor="middle" class="diagram-note" fill="var(--text)">Pod #2</text>
+
+          <text x="300" y="228" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">один вход снаружи — сколько угодно сервисов за ним</text>
+        </svg>
+        <figcaption>Объект Ingress — это конфиг для контроллера. Сам трафик всегда идёт через контроллер, а дальше — в обычный Service из урока 4.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a>
+      </div>
+
+      <h2>Практика: пустите сервис по имени hello.local</h2>
+      <p>Понадобится Deployment из урока 3 и Service <code>hello-fastapi</code> из урока 4 — проверьте, что они на месте: <code>kubectl get deploy,svc</code>.</p>
+
+      <ol class="steps">
+        <li>
+          Включите Ingress-контроллер в minikube:
+          <pre><code>minikube addons enable ingress</code></pre>
+          <p>Команда разворачивает nginx-контроллер в отдельном пространстве имён <code>ingress-nginx</code>. Первый запуск качает образы и занимает пару минут.</p>
+        </li>
+        <li>
+          Дождитесь, пока контроллер поднимется:
+          <pre><code>kubectl get pods -n ingress-nginx</code></pre>
+          <p>Нужен Pod с именем вида <code>ingress-nginx-controller-…</code> в статусе <code>Running</code> и <code>READY 1/1</code>. Флаг <code>-n</code> — это namespace: контроллер живёт не там же, где ваше приложение, поэтому без него <code>kubectl get pods</code> его просто не покажет.</p>
+        </li>
+        <li>
+          Создайте файл <code>ingress.yaml</code>:
+          <pre><code>apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hello-fastapi
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: hello.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hello-fastapi
+                port:
+                  number: 8000</code></pre>
+          <p><code>ingressClassName: nginx</code> говорит, какой контроллер должен взять это правило (в кластере их может быть несколько). <code>pathType: Prefix</code> означает «этот путь и всё, что начинается с него», поэтому одно правило с <code>/</code> покрывает и <code>/docs</code>, и <code>/health</code>. Порт <code>8000</code> — это порт <em>Service</em>, а не контейнера.</p>
+        </li>
+        <li>
+          Примените манифест и посмотрите, что получилось:
+          <pre><code>kubectl apply -f ingress.yaml
+kubectl get ingress</code></pre>
+          <p>Колонка <code>ADDRESS</code> заполняется не сразу — контроллеру нужно несколько секунд, чтобы подхватить правило. Когда там появится IP, он совпадёт с выводом <code>minikube ip</code>.</p>
+        </li>
+        <li>
+          Имя <code>hello.local</code> не существует ни в одном DNS — научите ему свою машину. Узнайте адрес кластера и допишите строку в <code>/etc/hosts</code>:
+          <pre><code>minikube ip
+sudo sh -c 'echo "$(minikube ip) hello.local" &gt;&gt; /etc/hosts'</code></pre>
+          <p>На Windows тот же файл лежит по пути <code>C:\Windows\System32\drivers\etc\hosts</code> и правится Блокнотом, запущенным от администратора.</p>
+        </li>
+        <li>
+          Откройте сервис по имени — без порта:
+          <pre><code>curl http://hello.local/
+curl http://hello.local/health</code></pre>
+          <p>И в браузере: <code>http://hello.local/docs</code>. Тот же самый сервис, что в уроке 4 отвечал по <code>192.168.49.2:31742</code>, теперь доступен по нормальному имени на стандартном 80-м порту.</p>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Убедитесь, что маршрут действительно живой</span>
+        Выполните:
+        <pre><code>kubectl describe ingress hello-fastapi</code></pre>
+        В разделе <code>Rules</code> вы увидите своё правило, а рядом с бэкендом — список конкретных адресов Pod'ов (<code>Endpoints</code>). Это значит, что контроллер нашёл Service, а Service нашёл живые Pod'ы. Если вместо адресов там пусто — почти всегда виноват не Ingress, а Service: не совпал <code>selector</code> или все Pod'ы провалили readiness-пробу из урока 6.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Если вы на macOS или Windows</span>
+        При docker-драйвере сеть minikube живёт внутри виртуальной машины, и <code>minikube ip</code> с вашей машины напрямую не доступен — запись в <code>hosts</code> просто не сработает. Решение: оставьте в отдельном терминале запущенной команду <code>minikube tunnel</code> (спросит пароль), а в <code>/etc/hosts</code> пропишите <code>127.0.0.1 hello.local</code>. Всё остальное в уроке работает без изменений.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Ingress не заменяет Service, а опирается на него: трафик всегда идёт «контроллер → Service → Pod». Поэтому после появления Ingress тип <code>NodePort</code> из урока 4 больше не нужен — верните Service обычный <code>type: ClusterIP</code>, и снаружи останется ровно один вход, а не два. А чтобы добавить второй сервис на том же домене, достаточно дописать ещё один блок в <code>paths</code> — например, <code>path: /api</code> с другим <code>backend</code>. Ради этого Ingress и придуман: один внешний адрес, много сервисов за ним.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Вы применили корректный манифест Ingress, но по адресу ничего не отвечает. Что проверить первым делом?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Хватает ли Deployment'у реплик для обработки внешних запросов</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Установлен ли в кластере Ingress-контроллер, исполняющий правила</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Открыт ли у Service порт NodePort с тем же номером, что у правила</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Что указывается в поле <code>backend.service.port.number</code> правила Ingress?</p>
+        <label class="quiz-option"><input type="radio" name="q2" value="a"> Внешний порт, по которому сервис открыт наружу кластера</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="b" data-correct="true"> Порт Service, в который контроллер направит запрос дальше</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="c"> Порт контейнера, который слушает приложение внутри Pod'а</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="minikube addons enable ingress">
+        <p class="quiz-question">Напишите команду, которая включает Ingress-контроллер в minikube:</p>
+        <input type="text" class="quiz-input" placeholder="minikube ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl describe ingress hello-fastapi">
+        <p class="quiz-question">Напишите команду, которая покажет правила и найденные endpoints для Ingress <code>hello-fastapi</code>:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основной источник для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0006-health-probes.html">← Урок 6: Health-пробы</a></span>
+        <span>Урок 8 (Масштабирование и обновления) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>

@@ -18,7 +18,7 @@
     { n: 4, slug: "0004-service", title: "Service", duration: "25–30 мин", available: true },
     { n: 5, slug: "0005-configmap-secret", title: "ConfigMap и Secret", duration: "30–35 мин", available: true },
     { n: 6, slug: "0006-health-probes", title: "Health-пробы", duration: "30–35 мин", available: true },
-    { n: 7, slug: "0007-ingress", title: "Ingress", duration: "35–40 мин", available: false },
+    { n: 7, slug: "0007-ingress", title: "Ingress", duration: "35–40 мин", available: true },
     { n: 8, slug: "0008-scaling-rollouts", title: "Масштабирование и обновления", duration: "25–30 мин", available: false },
     { n: 9, slug: "0009-logs-debug", title: "Логи и отладка", duration: "30–35 мин", available: false },
     { n: 10, slug: "0010-capstone-real-server", title: "Капстоун: реальный сервер", duration: "60–90 мин", available: false }
