@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Урок 7 · Ingress</title>
-<meta name="description" content="Ingress: как заменить случайный NodePort-порт нормальным доменным именем, чем правила Ingress отличаются от Ingress-контроллера и как поднять всё это в minikube.">
+<title>Урок 7 · Ingress и Gateway API</title>
+<meta name="description" content="Один вход в кластер: как читать Ingress-манифесты, почему ingress-nginx ушёл на покой в 2026 году и как выпустить сервис наружу через Gateway API — GatewayClass, Gateway и HTTPRoute на практике в minikube.">
 <link rel="icon" type="image/x-icon" href="../favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
@@ -53,22 +53,22 @@
   <main class="page-frame">
     <article class="page">
       <p class="kicker">Урок 07 · Kubernetes на практике</p>
-      <h1>Ingress</h1>
+      <h1>Ingress и Gateway API</h1>
       <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/356" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
-      <p class="lede">Service из урока 4 дал стабильный адрес внутри кластера, а снаружи — что-то вроде <code>192.168.49.2:31742</code>. Порт случайный, выдан кластером, и на каждый новый сервис будет свой такой же. Никто не пускает пользователей в интернет по такому адресу: снаружи нужны имена (<code>shop.example.com</code>), пути (<code>/api</code>, <code>/admin</code>) и HTTPS — и всё это на одном-единственном входе. Такой вход в Kubernetes называется <strong>Ingress</strong>.</p>
+      <p class="lede">Service из урока 4 дал стабильный адрес внутри кластера, а снаружи — что-то вроде <code>192.168.49.2:31742</code>. Порт случайный, выдан кластером, и на каждый новый сервис будет свой такой же. Никто не пускает пользователей в интернет по такому адресу: снаружи нужны имена (<code>shop.example.com</code>), пути (<code>/api</code>, <code>/admin</code>) и HTTPS — и всё это на одном-единственном входе. В Kubernetes за такой вход отвечали и отвечают два поколения объектов: старый <strong>Ingress</strong>, который вы точно встретите в чужих кластерах, и пришедший ему на смену <strong>Gateway API</strong>, на котором мы и сделаем практику.</p>
 
       <h2>Ingress — это правила. Исполняет их контроллер</h2>
-      <p>Здесь спотыкаются почти все, кто пробует Ingress впервые: вы пишете манифест, применяете его, <code>kubectl get ingress</code> показывает объект — а по адресу ничего не отвечает. Дело в том, что <strong>Ingress сам по себе ничего не делает</strong>. Это просто запись в базе кластера вида «запросы к хосту <code>hello.local</code> отправляй в Service <code>hello-fastapi</code>».</p>
-      <p>Чтобы правила заработали, в кластере должен жить <strong>Ingress-контроллер</strong> — обычный Pod с настоящим веб-сервером внутри (чаще всего nginx). Он следит за всеми объектами Ingress, на лету превращает их в свой конфиг и принимает трафик снаружи. Разделение труда простое:</p>
+      <p>Здесь спотыкаются почти все, кто впервые пробует выпустить сервис наружу: вы пишете манифест, применяете его, <code>kubectl get ingress</code> показывает объект — а по адресу ничего не отвечает. Дело в том, что <strong>Ingress сам по себе ничего не делает</strong>. Это просто запись в базе кластера вида «запросы к хосту <code>hello.local</code> отправляй в Service <code>hello-fastapi</code>».</p>
+      <p>Чтобы правила заработали, в кластере должен жить <strong>контроллер</strong> — обычный Pod с настоящим веб-сервером внутри (чаще всего nginx). Он следит за объектами маршрутизации, на лету превращает их в свой конфиг и принимает трафик снаружи. Разделение труда простое:</p>
       <ul>
-        <li><strong>Ingress</strong> (объект, который пишете вы) — <em>что</em> куда маршрутизировать: хост, путь, целевой Service и его порт.</li>
-        <li><strong>Ingress-контроллер</strong> (компонент, который ставится в кластер один раз) — <em>кто</em> эти правила исполняет и держит на себе внешний вход.</li>
+        <li><strong>Объект маршрутизации</strong> (его пишете вы) — <em>что</em> куда направлять: хост, путь, целевой Service и его порт.</li>
+        <li><strong>Контроллер</strong> (ставится в кластер один раз) — <em>кто</em> эти правила исполняет и держит на себе внешний вход.</li>
       </ul>
-      <p>В обычном кластере контроллер ставят администраторы; в minikube он включается одной командой-аддоном — это и сделаем в практике.</p>
+      <p>Запомните это разделение: оно одинаково верно и для Ingress, и для Gateway API, и именно его непонимание порождает большинство вопросов «почему не работает».</p>
 
       <figure class="diagram-figure">
         <svg viewBox="0 0 700 250" role="img" aria-labelledby="ingress-diagram-title" xmlns="http://www.w3.org/2000/svg">
-          <title id="ingress-diagram-title">Схема: браузер обращается к hello.local, Ingress-контроллер сверяется с правилами Ingress и направляет запрос в Service, который раздаёт его Pod'ам</title>
+          <title id="ingress-diagram-title">Схема: браузер обращается к hello.local, контроллер сверяется с правилами маршрутизации и направляет запрос в Service, который раздаёт его Pod'ам</title>
           <defs>
             <marker id="arrow7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
@@ -82,10 +82,10 @@
           <line x1="138" y1="122" x2="208" y2="122" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrow7)"></line>
 
           <rect x="210" y="40" width="180" height="164" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
-          <text x="300" y="64" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">INGRESS-КОНТРОЛЛЕР</text>
-          <text x="300" y="86" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">nginx внутри кластера</text>
+          <text x="300" y="64" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">КОНТРОЛЛЕР</text>
+          <text x="300" y="86" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">веб-сервер внутри кластера</text>
           <rect x="228" y="102" width="144" height="86" rx="6" fill="var(--paper)" stroke="var(--paper-line)"></rect>
-          <text x="300" y="122" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">правила Ingress</text>
+          <text x="300" y="122" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">правила маршрутизации</text>
           <text x="300" y="145" text-anchor="middle" class="diagram-note" fill="var(--text)">host: hello.local</text>
           <text x="300" y="166" text-anchor="middle" class="diagram-note" fill="var(--text)">path: /</text>
           <text x="300" y="182" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">→ hello-fastapi:8000</text>
@@ -106,31 +106,12 @@
 
           <text x="300" y="228" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">один вход снаружи — сколько угодно сервисов за ним</text>
         </svg>
-        <figcaption>Объект Ingress — это конфиг для контроллера. Сам трафик всегда идёт через контроллер, а дальше — в обычный Service из урока 4.</figcaption>
+        <figcaption>Объект маршрутизации — это конфиг для контроллера. Сам трафик всегда идёт через контроллер, а дальше — в обычный Service из урока 4.</figcaption>
       </figure>
 
-      <div class="callout">
-        <span class="callout-label">Источник</span>
-        Официальная документация — <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a>
-      </div>
-
-      <h2>Практика: пустите сервис по имени hello.local</h2>
-      <p>Понадобится Deployment из урока 3 и Service <code>hello-fastapi</code> из урока 4 — проверьте, что они на месте: <code>kubectl get deploy,svc</code>.</p>
-
-      <ol class="steps">
-        <li>
-          Включите Ingress-контроллер в minikube:
-          <pre><code>minikube addons enable ingress</code></pre>
-          <p>Команда разворачивает nginx-контроллер в отдельном пространстве имён <code>ingress-nginx</code>. Первый запуск качает образы и занимает пару минут.</p>
-        </li>
-        <li>
-          Дождитесь, пока контроллер поднимется:
-          <pre><code>kubectl get pods -n ingress-nginx</code></pre>
-          <p>Нужен Pod с именем вида <code>ingress-nginx-controller-…</code> в статусе <code>Running</code> и <code>READY 1/1</code>. Флаг <code>-n</code> — это namespace: контроллер живёт не там же, где ваше приложение, поэтому без него <code>kubectl get pods</code> его просто не покажет.</p>
-        </li>
-        <li>
-          Создайте файл <code>ingress.yaml</code>:
-          <pre><code>apiVersion: networking.k8s.io/v1
+      <h3>Как выглядит Ingress-манифест</h3>
+      <p>Применять его мы не будем — но прочитать нужно уметь, потому что в живых кластерах таких файлов тысячи:</p>
+      <pre><code>apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hello-fastapi
@@ -147,81 +128,257 @@ spec:
                 name: hello-fastapi
                 port:
                   number: 8000</code></pre>
-          <p><code>ingressClassName: nginx</code> говорит, какой контроллер должен взять это правило (в кластере их может быть несколько). <code>pathType: Prefix</code> означает «этот путь и всё, что начинается с него», поэтому одно правило с <code>/</code> покрывает и <code>/docs</code>, и <code>/health</code>. Порт <code>8000</code> — это порт <em>Service</em>, а не контейнера.</p>
+      <p>Читается сверху вниз: правило срабатывает для хоста <code>hello.local</code>, путь <code>/</code> с типом <code>Prefix</code> означает «этот путь и всё, что начинается с него», а запрос уходит в Service <code>hello-fastapi</code> на порт <code>8000</code> — порт Service, а не контейнера. Строка <code>ingressClassName</code> говорит, какой именно контроллер должен взять это правило.</p>
+      <p>Всё, что Ingress умеет выразить, — примерно это и есть. Чуть больше — редиректы, таймауты, переписывание путей, CORS — делалось <strong>аннотациями</strong>: строчками вида <code>nginx.ingress.kubernetes.io/rewrite-target: /</code> в <code>metadata</code>. У каждого контроллера аннотации были свои, несовместимые с чужими, и перенести конфиг с одного контроллера на другой означало переписать его целиком. Именно из этой боли и вырос Gateway API.</p>
+
+      <div class="callout alert">
+        <span class="callout-label">Статус на 2026 год — важно</span>
+        Ingress жив, но развитие остановлено, а самый популярный его контроллер закрыт:
+        <ul>
+          <li><strong>Ingress API заморожен.</strong> В документации Kubernetes прямо сказано: «The Kubernetes project recommends using Gateway instead of Ingress. The Ingress API has been frozen». Заморожен — не значит удалён: объект остаётся стабильным (GA), удалять его не планируют, существующие манифесты продолжат работать. Но новых возможностей у него не будет никогда.</li>
+          <li><strong>ingress-nginx ушёл на покой.</strong> Тот самый контроллер от сообщества Kubernetes, который стоял примерно в половине кластеров мира и который поднимает команда <code>minikube addons enable ingress</code>, был объявлен к выводу в ноябре 2025 года, а 24 марта 2026 года его репозиторий заархивирован. Обновлений и патчей безопасности больше не выходит — найденные с тех пор уязвимости не будут исправлены никогда.</li>
+        </ul>
+        Обратите внимание на границы: не-EOL остались и сам Ingress API, и веб-сервер nginx, и отдельный коммерческий контроллер от F5/NGINX — закрыт именно community-проект <code>kubernetes/ingress-nginx</code>. Практический вывод для вас: <strong>читать Ingress уметь надо, а новое строить — на Gateway API</strong>. Поэтому дальше в уроке мы идём именно туда.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        <a href="https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/" target="_blank" rel="noopener">Kubernetes Blog: Ingress NGINX Retirement</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a> (баннер о заморозке — в начале страницы)
+      </div>
+
+      <h2>Gateway API: три объекта вместо одного</h2>
+      <p>Gateway API решает ту же задачу — впустить трафик в кластер, — но разбирает её на три объекта вместо одного. Причина не в любви к сложности, а в том, что за разные части этой задачи в реальной команде отвечают разные люди:</p>
+
+      <table>
+        <thead>
+          <tr><th>Объект</th><th>Что описывает</th><th>Кто обычно владеет</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GatewayClass</code></td>
+            <td>Какая реализация обслуживает шлюзы — «мы используем nginx» / «мы используем Envoy». Создаётся один раз при установке контроллера.</td>
+            <td>Поставщик инфраструктуры</td>
+          </tr>
+          <tr>
+            <td><code>Gateway</code></td>
+            <td>Сам вход: какие порты слушаем, по каким протоколам, с какими сертификатами и для каких доменов.</td>
+            <td>Платформенная команда</td>
+          </tr>
+          <tr>
+            <td><code>HTTPRoute</code></td>
+            <td>Куда девать конкретный запрос: хост, путь, заголовки → в такой-то Service. Живёт рядом с приложением.</td>
+            <td>Разработчик сервиса</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>В Ingress всё это было слито в один файл, и чтобы добавить своему сервису маршрут, разработчику приходилось лезть в общий объект, где рядом лежат сертификаты и чужие правила. В Gateway API маршрут — отдельный объект: команда платформы один раз поднимает <code>Gateway</code>, а дальше каждая команда добавляет свои <code>HTTPRoute</code>, ничего общего не трогая. Плюс то, что раньше жило в аннотациях конкретного контроллера — разделение трафика по весам, работа с заголовками, редиректы, — теперь часть самого API и переносится между реализациями.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 300" role="img" aria-labelledby="gw-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="gw-diagram-title">Схема Gateway API: GatewayClass задаёт реализацию, Gateway описывает вход и порт, два HTTPRoute направляют запросы по разным путям в разные Service</title>
+          <defs>
+            <marker id="arrowgw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="8" y="118" width="120" height="64" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="68" y="142" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">GATEWAYCLASS</text>
+          <text x="68" y="164" text-anchor="middle" class="diagram-title" fill="var(--text)">nginx</text>
+
+          <line x1="130" y1="150" x2="188" y2="150" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arrowgw)" stroke-dasharray="4 3"></line>
+
+          <rect x="190" y="100" width="150" height="100" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="265" y="124" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">GATEWAY</text>
+          <text x="265" y="146" text-anchor="middle" class="diagram-title" fill="var(--text)">hello-gateway</text>
+          <text x="265" y="168" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">listener :80 / HTTP</text>
+          <text x="265" y="188" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">hello.local</text>
+
+          <line x1="342" y1="132" x2="400" y2="80" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrowgw)"></line>
+          <line x1="342" y1="168" x2="400" y2="220" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrowgw)"></line>
+
+          <rect x="402" y="40" width="160" height="76" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="482" y="63" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">HTTPROUTE</text>
+          <text x="482" y="85" text-anchor="middle" class="diagram-title" fill="var(--text)">path: /</text>
+          <text x="482" y="106" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">→ hello-fastapi:8000</text>
+
+          <rect x="402" y="184" width="160" height="76" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="482" y="207" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">HTTPROUTE</text>
+          <text x="482" y="229" text-anchor="middle" class="diagram-title" fill="var(--text)">path: /api</text>
+          <text x="482" y="250" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">→ другой Service</text>
+
+          <line x1="564" y1="78" x2="622" y2="78" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arrowgw)"></line>
+          <line x1="564" y1="222" x2="622" y2="222" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arrowgw)"></line>
+
+          <rect x="624" y="54" width="68" height="48" rx="8" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="658" y="83" text-anchor="middle" class="diagram-note" fill="var(--text)">Service</text>
+          <rect x="624" y="198" width="68" height="48" rx="8" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="658" y="227" text-anchor="middle" class="diagram-note" fill="var(--text)">Service</text>
+
+          <text x="265" y="228" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">один вход</text>
+          <text x="482" y="288" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">маршруты добавляют команды сервисов — независимо друг от друга</text>
+        </svg>
+        <figcaption>Вход описан один раз в <code>Gateway</code>, а маршруты к нему подключаются отдельными объектами <code>HTTPRoute</code> — их можно держать рядом с кодом сервиса.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://gateway-api.sigs.k8s.io/" target="_blank" rel="noopener">Kubernetes Gateway API</a>
+      </div>
+
+      <h2>Практика: выпустите сервис наружу через Gateway API</h2>
+      <p>Понадобится Deployment из урока 3 и Service <code>hello-fastapi</code> из урока 4 — проверьте, что они на месте: <code>kubectl get deploy,svc</code>. Ingress-аддон minikube включать не нужно; если вы уже успели его включить, выключите: <code>minikube addons disable ingress</code>.</p>
+
+      <ol class="steps">
+        <li>
+          Установите сам Gateway API. В отличие от Ingress, он <strong>не встроен</strong> в Kubernetes — это набор CRD (пользовательских типов объектов), которые ставятся отдельно:
+          <pre><code>GWAPI=https://github.com/kubernetes-sigs/gateway-api/releases/download
+
+kubectl apply --server-side -f $GWAPI/v1.6.1/standard-install.yaml</code></pre>
+          <p>Проверить, что типы появились в кластере: <code>kubectl get crd | grep gateway</code>. Сейчас в кластере есть описание объектов — но ещё нет никого, кто бы их исполнял.</p>
         </li>
         <li>
-          Примените манифест и посмотрите, что получилось:
-          <pre><code>kubectl apply -f ingress.yaml
-kubectl get ingress</code></pre>
-          <p>Колонка <code>ADDRESS</code> заполняется не сразу — контроллеру нужно несколько секунд, чтобы подхватить правило. Когда там появится IP, он совпадёт с выводом <code>minikube ip</code>.</p>
+          Поставьте контроллер. Возьмём <strong>NGINX Gateway Fabric</strong> — реализацию Gateway API поверх того же nginx, живую и поддерживаемую (это не тот проект, что закрылся в марте):
+          <pre><code>NGF=https://raw.githubusercontent.com/nginx/nginx-gateway-fabric
+
+kubectl create namespace nginx-gateway
+kubectl apply --server-side -f $NGF/v2.7.0/deploy/crds.yaml
+kubectl apply -f $NGF/v2.7.0/deploy/default/deploy.yaml</code></pre>
+          <p>Дождитесь готовности контроллера и убедитесь, что он зарегистрировал свой класс:</p>
+          <pre><code>kubectl get pods -n nginx-gateway
+kubectl get gatewayclass</code></pre>
+          <p>В выводе последней команды должен появиться класс <code>nginx</code> со значением <code>ACCEPTED: True</code> — это и есть тот самый <code>GatewayClass</code> из таблицы выше, вы его не создавали, его принёс с собой контроллер.</p>
         </li>
         <li>
-          Имя <code>hello.local</code> не существует ни в одном DNS — научите ему свою машину. Узнайте адрес кластера и допишите строку в <code>/etc/hosts</code>:
-          <pre><code>minikube ip
-sudo sh -c 'echo "$(minikube ip) hello.local" &gt;&gt; /etc/hosts'</code></pre>
-          <p>На Windows тот же файл лежит по пути <code>C:\Windows\System32\drivers\etc\hosts</code> и правится Блокнотом, запущенным от администратора.</p>
+          Опишите вход — файл <code>gateway.yaml</code>:
+          <pre><code>apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: hello-gateway
+spec:
+  gatewayClassName: nginx
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "hello.local"
+      allowedRoutes:
+        namespaces:
+          from: Same</code></pre>
+          <p><code>listeners</code> — это порты, которые шлюз слушает снаружи; здесь один, обычный HTTP на 80. <code>allowedRoutes</code> задаёт, чьи маршруты этот вход готов принимать: <code>Same</code> — только из своего пространства имён. Это та самая ролевая граница — владелец шлюза решает, кого к себе пускать.</p>
         </li>
         <li>
-          Откройте сервис по имени — без порта:
+          Опишите маршрут — файл <code>httproute.yaml</code>:
+          <pre><code>apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hello-fastapi
+spec:
+  parentRefs:
+    - name: hello-gateway
+      sectionName: http
+  hostnames:
+    - "hello.local"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: hello-fastapi
+          port: 8000</code></pre>
+          <p>Сравните с Ingress-манифестом выше — содержание то же самое, но появился <code>parentRefs</code>: маршрут сам заявляет, к какому шлюзу он подключается. Именно поэтому его можно писать и применять, не трогая чужой общий объект.</p>
+        </li>
+        <li>
+          Примените оба файла и проверьте, что кластер их принял:
+          <pre><code>kubectl apply -f gateway.yaml -f httproute.yaml
+kubectl get gateway
+kubectl describe httproute hello-fastapi</code></pre>
+          <p>У Gateway в колонке <code>PROGRAMMED</code> должно появиться <code>True</code> — контроллер поднял под этот шлюз настоящий nginx. В выводе <code>describe</code> для маршрута ищите условия <code>Accepted: True</code> и <code>ResolvedRefs: True</code>: первое означает, что шлюз маршрут принял, второе — что Service <code>hello-fastapi</code> найден.</p>
+        </li>
+        <li>
+          Откройте шлюз наружу. Под <code>Gateway</code> контроллер создал отдельный Deployment с nginx и Service типа <code>LoadBalancer</code> — в minikube такой Service получает внешний адрес только при запущенном туннеле. В <strong>отдельном</strong> терминале запустите и оставьте работать:
+          <pre><code>minikube tunnel</code></pre>
+          <p>Команда спросит пароль — ей нужны права, чтобы поднять сетевой маршрут на вашей машине.</p>
+        </li>
+        <li>
+          В первом терминале посмотрите, какой адрес получил шлюз:
+          <pre><code>kubectl get svc</code></pre>
+          <p>Найдите сервис, имя которого начинается с <code>hello-gateway</code>, и возьмите его <code>EXTERNAL-IP</code>. Пропишите этот адрес в <code>/etc/hosts</code> (на Windows — <code>C:\Windows\System32\drivers\etc\hosts</code>, Блокнотом от администратора), подставив вместо <code>&lt;EXTERNAL-IP&gt;</code> увиденное значение:</p>
+          <pre><code>sudo sh -c 'echo "&lt;EXTERNAL-IP&gt; hello.local" &gt;&gt; /etc/hosts'</code></pre>
+        </li>
+        <li>
+          Проверьте результат — по имени и без всякого порта:
           <pre><code>curl http://hello.local/
 curl http://hello.local/health</code></pre>
-          <p>И в браузере: <code>http://hello.local/docs</code>. Тот же самый сервис, что в уроке 4 отвечал по <code>192.168.49.2:31742</code>, теперь доступен по нормальному имени на стандартном 80-м порту.</p>
+          <p>И в браузере: <code>http://hello.local/docs</code>. Тот же сервис, что в уроке 4 отвечал по <code>192.168.49.2:31742</code>, теперь доступен по нормальному имени на стандартном 80-м порту.</p>
         </li>
       </ol>
 
       <div class="callout win">
-        <span class="callout-label">Убедитесь, что маршрут действительно живой</span>
-        Выполните:
-        <pre><code>kubectl describe ingress hello-fastapi</code></pre>
-        В разделе <code>Rules</code> вы увидите своё правило, а рядом с бэкендом — список конкретных адресов Pod'ов (<code>Endpoints</code>). Это значит, что контроллер нашёл Service, а Service нашёл живые Pod'ы. Если вместо адресов там пусто — почти всегда виноват не Ingress, а Service: не совпал <code>selector</code> или все Pod'ы провалили readiness-пробу из урока 6.
+        <span class="callout-label">Проверьте, что маршрут живой — не угадывая</span>
+        Если <code>curl</code> молчит или отдаёт 404, не переустанавливайте всё заново — у Gateway API очень разговорчивые статусы, и почти всегда он прямо говорит, что не так:
+        <pre><code>kubectl describe gateway hello-gateway
+kubectl describe httproute hello-fastapi</code></pre>
+        <code>Accepted: False</code> у маршрута — шлюз его не принял: чаще всего не совпал <code>parentRefs.name</code> или маршрут лежит в другом пространстве имён, чем разрешает <code>allowedRoutes</code>. <code>ResolvedRefs: False</code> — не найден Service из <code>backendRefs</code>: опечатка в имени или неверный порт. Пустой <code>EXTERNAL-IP</code> — не запущен <code>minikube tunnel</code>. Это заметное улучшение по сравнению с Ingress, где о причинах приходилось догадываться по логам контроллера.
       </div>
 
       <div class="callout">
-        <span class="callout-label">Если вы на macOS или Windows</span>
-        При docker-драйвере сеть minikube живёт внутри виртуальной машины, и <code>minikube ip</code> с вашей машины напрямую не доступен — запись в <code>hosts</code> просто не сработает. Решение: оставьте в отдельном терминале запущенной команду <code>minikube tunnel</code> (спросит пароль), а в <code>/etc/hosts</code> пропишите <code>127.0.0.1 hello.local</code>. Всё остальное в уроке работает без изменений.
+        <span class="callout-label">Если у вас уже есть Ingress-манифесты</span>
+        Переписывать вручную не обязательно: у SIG Network есть официальная утилита <a href="https://github.com/kubernetes-sigs/ingress2gateway" target="_blank" rel="noopener">ingress2gateway</a>, которая читает существующие Ingress-объекты (в том числе распространённые аннотации ingress-nginx) и печатает готовые Gateway и HTTPRoute. Результат всё равно нужно вычитать глазами, но 90% рутины она снимает.
       </div>
 
       <div class="callout">
         <span class="callout-label">Лайфхак</span>
-        Ingress не заменяет Service, а опирается на него: трафик всегда идёт «контроллер → Service → Pod». Поэтому после появления Ingress тип <code>NodePort</code> из урока 4 больше не нужен — верните Service обычный <code>type: ClusterIP</code>, и снаружи останется ровно один вход, а не два. А чтобы добавить второй сервис на том же домене, достаточно дописать ещё один блок в <code>paths</code> — например, <code>path: /api</code> с другим <code>backend</code>. Ради этого Ingress и придуман: один внешний адрес, много сервисов за ним.
+        Gateway API не заменяет Service, а опирается на него: трафик всегда идёт «шлюз → Service → Pod». Поэтому после появления шлюза тип <code>NodePort</code> из урока 4 больше не нужен — верните Service обычный <code>type: ClusterIP</code>, и снаружи останется ровно один вход, а не два. А чтобы выпустить второй сервис на том же домене, не нужно трогать <code>Gateway</code> вообще: пишете ещё один <code>HTTPRoute</code> с тем же <code>parentRefs</code> и своим путём — например, <code>/api</code>. Ради этого разделения Gateway API и придуман.
       </div>
 
       <h2>Проверьте себя</h2>
 
       <div class="quiz" data-quiz="mc">
-        <p class="quiz-question">Вы применили корректный манифест Ingress, но по адресу ничего не отвечает. Что проверить первым делом?</p>
-        <label class="quiz-option"><input type="radio" name="q1" value="a"> Хватает ли Deployment'у реплик для обработки внешних запросов</label>
-        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Установлен ли в кластере Ingress-контроллер, исполняющий правила</label>
-        <label class="quiz-option"><input type="radio" name="q1" value="c"> Открыт ли у Service порт NodePort с тем же номером, что у правила</label>
+        <p class="quiz-question">Что именно произошло с Ingress к 2026 году?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> API удалён из Kubernetes, существующие манифесты больше не применяются</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> API заморожен и остаётся рабочим, но контроллер ingress-nginx закрыт</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> API переименован в Gateway, старые объекты конвертируются автоматически</label>
         <button class="quiz-check">Проверить</button>
         <p class="quiz-feedback" hidden></p>
       </div>
 
       <div class="quiz" data-quiz="mc">
-        <p class="quiz-question">Что указывается в поле <code>backend.service.port.number</code> правила Ingress?</p>
-        <label class="quiz-option"><input type="radio" name="q2" value="a"> Внешний порт, по которому сервис открыт наружу кластера</label>
-        <label class="quiz-option"><input type="radio" name="q2" value="b" data-correct="true"> Порт Service, в который контроллер направит запрос дальше</label>
-        <label class="quiz-option"><input type="radio" name="q2" value="c"> Порт контейнера, который слушает приложение внутри Pod'а</label>
+        <p class="quiz-question">Разработчику нужно выпустить наружу новый сервис на уже работающем шлюзе. Что он создаёт?</p>
+        <label class="quiz-option"><input type="radio" name="q2" value="a"> Новый GatewayClass, указывающий на тот же контроллер кластера</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="b"> Новый Gateway с тем же портом и тем же доменным именем</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="c" data-correct="true"> Новый HTTPRoute со ссылкой на существующий шлюз в parentRefs</label>
         <button class="quiz-check">Проверить</button>
         <p class="quiz-feedback" hidden></p>
       </div>
 
-      <div class="quiz quiz-recall" data-quiz="recall" data-answer="minikube addons enable ingress">
-        <p class="quiz-question">Напишите команду, которая включает Ingress-контроллер в minikube:</p>
-        <input type="text" class="quiz-input" placeholder="minikube ...">
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">У HTTPRoute в статусе видно <code>ResolvedRefs: False</code>. О чём это говорит?</p>
+        <label class="quiz-option"><input type="radio" name="q3" value="a"> Шлюз отказался принимать этот маршрут из-за правил allowedRoutes</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="b" data-correct="true"> Не найден Service, указанный в backendRefs, — имя или порт неверны</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="c"> Не запущен minikube tunnel, поэтому внешний адрес остался пустым</label>
         <button class="quiz-check">Проверить</button>
         <p class="quiz-feedback" hidden></p>
       </div>
 
-      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl describe ingress hello-fastapi">
-        <p class="quiz-question">Напишите команду, которая покажет правила и найденные endpoints для Ingress <code>hello-fastapi</code>:</p>
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get gatewayclass">
+        <p class="quiz-question">Напишите команду, которая покажет, какие реализации Gateway API зарегистрированы в кластере:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl describe httproute hello-fastapi">
+        <p class="quiz-question">Напишите команду, которая покажет условия <code>Accepted</code> и <code>ResolvedRefs</code> для маршрута <code>hello-fastapi</code>:</p>
         <input type="text" class="quiz-input" placeholder="kubectl ...">
         <button class="quiz-check">Проверить</button>
         <p class="quiz-feedback" hidden></p>
       </div>
 
       <footer class="sources">
-        <strong>Основной источник для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a> (официальная документация).
+        <strong>Основные источники для этого урока:</strong> <a href="https://gateway-api.sigs.k8s.io/" target="_blank" rel="noopener">Kubernetes Gateway API</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/" target="_blank" rel="noopener">Kubernetes Docs: Ingress</a> · <a href="https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/" target="_blank" rel="noopener">Kubernetes Blog: Ingress NGINX Retirement</a> · <a href="https://docs.nginx.com/nginx-gateway-fabric/install/manifests/open-source/" target="_blank" rel="noopener">NGINX Gateway Fabric: установка манифестами</a>.
       </footer>
 
       <nav class="lesson-nav">

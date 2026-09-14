@@ -464,6 +464,8 @@ blockquote {
 .diagram-note { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.02em; }
 .callout.win { border-left-color: var(--pine); }
 .callout.win .callout-label { color: var(--pine); }
+.callout.alert { border-left-color: var(--rust); }
+.callout.alert .callout-label { color: var(--rust); }
 
 table {
   width: 100%;
