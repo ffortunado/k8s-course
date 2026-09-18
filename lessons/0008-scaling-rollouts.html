@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 8 · Масштабирование и обновления</title>
+<meta name="description" content="Как добавить копий сервису и выкатить новую версию без простоя: kubectl scale, rolling update и откат через rollout undo, а в финале — автомасштабирование HPA по нагрузке на CPU.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>8 / 10</span>
+      </summary>
+      <nav id="course-route" data-current="8" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 08 · Kubernetes на практике</p>
+      <h1>Масштабирование и обновления</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">Ваш Deployment с урока 3 держит ровно две реплики версии <code>0.3</code> — и держит их, что бы ни случилось. Но в жизни к сервису приходят два вопроса, и приходят сразу: как добавить копий, когда нагрузка выросла, и как выкатить новую версию, не уронив то, что уже работает. Хорошая новость в том, что отвечает на оба один и тот же объект, который у вас уже есть. Deployment — это не только «пусть работает N копий», но и «переходи к новому состоянию аккуратно».</p>
+
+      <h2>Масштабирование: одна цифра</h2>
+      <p>Горизонтальное масштабирование в Kubernetes — это буквально изменение числа <code>replicas</code>. ReplicaSet из урока 3 сравнивает факт с желаемым и досоздаёт недостающие Pod'ы; ему всё равно, стало желаемое число больше или меньше. Service из урока 4 тоже ничего не требует: он находит Pod'ы по ярлыку, и новые попадают в его список автоматически, как только пройдут readiness-пробу из урока 6.</p>
+      <p>Сделать это можно двумя способами, и разница между ними — источник классической ошибки:</p>
+      <ul>
+        <li><strong>Императивно</strong>, командой <code>kubectl scale</code> — мгновенно и удобно, но кластер теперь расходится с вашим <code>deployment.yaml</code>, где по-прежнему написано <code>replicas: 2</code>.</li>
+        <li><strong>Декларативно</strong>, правкой манифеста и <code>kubectl apply</code> — чуть дольше, зато файл остаётся правдой о том, что происходит в кластере.</li>
+      </ul>
+
+      <h2>Rolling update: почему сервис не падает во время выката</h2>
+      <p>Когда вы меняете образ в Deployment, старые Pod'ы не выключаются все разом. Deployment создаёт <strong>второй ReplicaSet</strong> — под новую версию — и начинает перекладывать реплики из старого в новый по чуть-чуть: поднял новый Pod, дождался его готовности, погасил один старый, повторил. Пока идёт эта перекладка, за Service одновременно живут Pod'ы обеих версий, и запросы обслуживаются без паузы.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 260" role="img" aria-labelledby="rollout-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="rollout-diagram-title">Схема выката: сначала два Pod'а версии 0.3, затем смешанное состояние из старой и новой версии, в конце — два Pod'а версии 0.4</title>
+
+          <text x="110" y="28" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">БЫЛО</text>
+          <text x="350" y="28" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">ИДЁТ ВЫКАТ</text>
+          <text x="590" y="28" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">СТАЛО</text>
+
+          <rect x="14" y="44" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="110" y="66" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">ReplicaSet 0.3</text>
+          <circle cx="82" cy="96" r="13" fill="var(--brass)" opacity="0.85"></circle>
+          <circle cx="138" cy="96" r="13" fill="var(--brass)" opacity="0.85"></circle>
+
+          <rect x="14" y="140" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)" stroke-dasharray="4 3"></rect>
+          <text x="110" y="162" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">ReplicaSet 0.4</text>
+          <text x="110" y="192" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">ещё не создан</text>
+
+          <rect x="254" y="44" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="350" y="66" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">ReplicaSet 0.3</text>
+          <circle cx="350" cy="96" r="13" fill="var(--brass)" opacity="0.85"></circle>
+
+          <rect x="254" y="140" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="350" y="162" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">ReplicaSet 0.4</text>
+          <circle cx="322" cy="192" r="13" fill="var(--pine)" opacity="0.85"></circle>
+          <circle cx="378" cy="192" r="13" fill="none" stroke="var(--pine)" stroke-width="1.6" stroke-dasharray="3 2"></circle>
+
+          <rect x="494" y="44" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)" stroke-dasharray="4 3"></rect>
+          <text x="590" y="66" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">ReplicaSet 0.3</text>
+          <text x="590" y="96" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">0 реплик, но сохранён</text>
+
+          <rect x="494" y="140" width="192" height="80" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="590" y="162" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">ReplicaSet 0.4</text>
+          <circle cx="562" cy="192" r="13" fill="var(--pine)" opacity="0.85"></circle>
+          <circle cx="618" cy="192" r="13" fill="var(--pine)" opacity="0.85"></circle>
+
+          <text x="350" y="248" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">старый ReplicaSet не удаляется — именно поэтому возможен мгновенный откат</text>
+        </svg>
+        <figcaption>Пунктирный кружок — Pod, который уже создан, но ещё не прошёл readiness-пробу: до этого момента старую реплику никто не погасит.</figcaption>
+      </figure>
+
+      <p>Скорость перекладки задаётся двумя параметрами в <code>spec.strategy.rollingUpdate</code>: <code>maxSurge</code> — сколько Pod'ов разрешено поднять <em>сверх</em> заявленного числа, и <code>maxUnavailable</code> — сколько разрешено недосчитаться. По умолчанию оба равны 25%, и менять их ради учебного сервиса не нужно.</p>
+
+      <div class="callout alert">
+        <span class="callout-label">Здесь работает readiness-проба из урока 6</span>
+        Обратите внимание, на чём держится вся безопасность выката: Deployment гасит старый Pod только после того, как новый сообщил о готовности. Если readiness-пробы нет, «готовым» считается любой запустившийся процесс — и битую версию раскатает на все реплики за несколько секунд, а вы узнаете об этом от пользователей. Пробы из урока 6 — не отдельная приятная функция, а условие, при котором обновления вообще можно делать спокойно.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/" target="_blank" rel="noopener">Kubernetes Docs: Deployments</a> и <a href="https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/" target="_blank" rel="noopener">Horizontal Pod Autoscaling</a>
+      </div>
+
+      <h2>Практика, часть 1: масштабирование руками</h2>
+      <p>Понадобится Deployment из урока 3 с пробами из урока 6 — проверьте: <code>kubectl get deploy</code>.</p>
+
+      <ol class="steps">
+        <li>
+          Добавьте реплик одной командой и сразу посмотрите на результат:
+          <pre><code>kubectl scale deployment hello-fastapi --replicas=5
+kubectl get pods</code></pre>
+          <p>Три новых Pod'а появятся почти мгновенно — образ уже есть на узле, качать нечего.</p>
+        </li>
+        <li>
+          Теперь проверьте, что произойдёт, если применить старый манифест:
+          <pre><code>kubectl apply -f deployment.yaml
+kubectl get deploy hello-fastapi</code></pre>
+          <p>Реплик снова <code>2</code>. Ничего не сломалось — просто в файле написано <code>replicas: 2</code>, и <code>apply</code> честно привёл кластер к тому, что в нём написано. Ваша команда <code>scale</code> была разовой правкой поверх, и её только что затёрли.</p>
+        </li>
+        <li>
+          Сделайте то же самое декларативно: откройте <code>deployment.yaml</code>, поставьте <code>replicas: 4</code>, примените и убедитесь, что теперь состояние кластера и файл совпадают:
+          <pre><code>kubectl apply -f deployment.yaml
+kubectl get deploy hello-fastapi</code></pre>
+        </li>
+      </ol>
+
+      <h2>Практика, часть 2: выкат новой версии и откат</h2>
+
+      <ol class="steps">
+        <li>
+          Добавьте в <code>main.py</code> эндпоинт, который нагружает процессор, — он понадобится в третьей части урока. Заодно пометьте версию в ответе корня, чтобы выкат было видно глазами:
+          <pre><code>import time
+
+@app.get("/")
+def root():
+    return {"message": "Привет из контейнера", "version": "0.4"}
+
+@app.get("/load")
+def load(seconds: float = 0.2):
+    end = time.monotonic() + seconds
+    count = 0
+    while time.monotonic() &lt; end:
+        count += 1
+    return {"iterations": count}</code></pre>
+          <p>Старую функцию <code>root</code> из урока 1 замените этой — остальные эндпоинты не трогайте. <code>/load</code> просто крутит пустой цикл заданное время: никакой пользы, зато предсказуемая нагрузка на CPU.</p>
+        </li>
+        <li>
+          Соберите образ под новым тегом и загрузите его в кластер:
+          <pre><code>docker build -t hello-fastapi:0.4 .
+minikube image load hello-fastapi:0.4</code></pre>
+        </li>
+        <li>
+          Откройте <code>deployment.yaml</code>, добавьте контейнеру запрос ресурсов и поменяйте тег образа на <code>0.4</code>:
+          <pre><code>containers:
+  - name: hello-fastapi
+    image: hello-fastapi:0.4
+    resources:
+      requests:
+        cpu: 100m
+      limits:
+        cpu: 500m
+    ports:
+      - containerPort: 8000
+    # envFrom из урока 5 и обе пробы из урока 6 остаются как были</code></pre>
+          <p><code>requests</code> — это то, что Pod гарантированно получит и по чему планировщик выбирает узел; <code>limits</code> — потолок, выше которого контейнер не пустят. <code>100m</code> читается как «сто милли-ядер», то есть одна десятая ядра. Без <code>requests.cpu</code> третья часть урока просто не заработает — почему, увидите там же.</p>
+        </li>
+        <li>
+          Запустите выкат и наблюдайте за ним:
+          <pre><code>kubectl apply -f deployment.yaml
+kubectl rollout status deployment/hello-fastapi</code></pre>
+          <p>Команда <code>rollout status</code> не просто печатает текст — она ждёт и завершается только когда выкат закончен. Именно поэтому её ставят в CI-скрипты после деплоя.</p>
+        </li>
+        <li>
+          Посмотрите на два ReplicaSet со схемы — теперь они настоящие:
+          <pre><code>kubectl get rs</code></pre>
+          <p>Старый остался в списке с <code>DESIRED 0</code>. Kubernetes хранит его намеренно — это и есть сохранённая история, из которой делается откат.</p>
+        </li>
+        <li>
+          Убедитесь, что версия действительно сменилась, и откатитесь назад:
+          <pre><code>kubectl rollout history deployment/hello-fastapi
+kubectl rollout undo deployment/hello-fastapi
+kubectl rollout status deployment/hello-fastapi</code></pre>
+          <p>Откат — это такой же rolling update, только в обратную сторону: тем же способом, с той же readiness-проверкой, без простоя.</p>
+        </li>
+        <li>
+          Вернитесь на версию <code>0.4</code> — она нужна для третьей части:
+          <pre><code>kubectl apply -f deployment.yaml
+kubectl rollout status deployment/hello-fastapi</code></pre>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Увидьте обе версии одновременно</span>
+        Повторите выкат, но перед <code>apply</code> запустите в <strong>отдельном</strong> терминале наблюдение:
+        <pre><code>kubectl get pods --watch</code></pre>
+        Вы увидите живую картину со схемы: новый Pod появляется в <code>ContainerCreating</code>, затем <code>Running</code> с <code>READY 0/1</code> — он ещё не прошёл readiness-пробу, и трафика ему не дают. И только когда он становится <code>1/1</code>, один из старых уходит в <code>Terminating</code>. Остановите наблюдение сочетанием <kbd>Ctrl+C</kbd>.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак: перезапуск без смены образа</span>
+        Иногда нужно перезапустить Pod'ы, ничего не меняя в образе, — например, вы поправили ConfigMap или Secret из урока 5. Переменные окружения читаются один раз при старте процесса, поэтому работающие Pod'ы новых значений не увидят, сколько ни применяй <code>configmap.yaml</code>. Правильный способ — не удалять Pod'ы руками, а сделать <code>kubectl rollout restart deployment/hello-fastapi</code>: это обычный rolling update, только на ту же самую версию. Сервис при этом не прерывается.
+      </div>
+
+      <h2>Практика, часть 3: пусть кластер считает реплики сам</h2>
+      <p>Крутить <code>replicas</code> руками можно ровно до тех пор, пока вы смотрите на графики. Дальше эту работу отдают <strong>HorizontalPodAutoscaler</strong> (HPA): он раз в пятнадцать секунд смотрит на нагрузку и сам меняет число реплик в заданных границах.</p>
+
+      <ol class="steps">
+        <li>
+          HPA нечем измерять нагрузку, пока в кластере нет сборщика метрик. В minikube это аддон:
+          <pre><code>minikube addons enable metrics-server</code></pre>
+          <p>Через минуту-две проверьте, что метрики пошли: <code>kubectl top pods</code>. Если команда отвечает «metrics not available yet» — просто подождите ещё немного, сборщику нужно время на первые замеры.</p>
+        </li>
+        <li>
+          Создайте файл <code>hpa.yaml</code>:
+          <pre><code>apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hello-fastapi
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hello-fastapi
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50</code></pre>
+          <p>Читается так: следи за Deployment <code>hello-fastapi</code>, держи среднюю загрузку CPU около 50% и ради этого меняй число реплик в границах от 2 до 8.</p>
+        </li>
+        <li>
+          Примените и посмотрите на текущее состояние:
+          <pre><code>kubectl apply -f hpa.yaml
+kubectl get hpa</code></pre>
+          <p>В колонке <code>TARGETS</code> должно появиться что-то вроде <code>cpu: 1%/50%</code>. Если вместо числа стоит <code>&lt;unknown&gt;</code> — либо метрики ещё не собрались, либо у контейнера нет <code>requests.cpu</code>.</p>
+          <p>Если сейчас у вас четыре реплики с прошлой части, а нагрузки нет, HPA через несколько минут сам сведёт их к <code>minReplicas: 2</code> — это не сбой, а ровно его работа: он теперь хозяин этого числа.</p>
+        </li>
+        <li>
+          Дайте нагрузку. В <strong>отдельном</strong> терминале запустите временный Pod, который будет непрерывно дёргать <code>/load</code> по внутреннему имени Service из урока 4:
+          <pre><code>URL=http://hello-fastapi:8000/load
+
+kubectl run loader --rm -it --restart=Never --image=busybox \
+  -- sh -c "while true; do wget -qO- $URL; done"</code></pre>
+          <p>Флаг <code>--rm</code> означает «удали Pod, когда я выйду», так что после <kbd>Ctrl+C</kbd> за собой убирать не придётся.</p>
+        </li>
+        <li>
+          В первом терминале смотрите, как HPA реагирует:
+          <pre><code>kubectl get hpa --watch</code></pre>
+          <p>В течение минуты <code>TARGETS</code> уйдёт далеко за 50%, а <code>REPLICAS</code> начнёт расти. Остановите загрузчик (<kbd>Ctrl+C</kbd> во втором терминале) и продолжайте наблюдать.</p>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Не пугайтесь, что реплики не убираются сразу</span>
+        После снятия нагрузки CPU упадёт за секунды, а вот число реплик будет держаться ещё около пяти минут. Это не поломка и не задержка метрик — у HPA есть стабилизационное окно на уменьшение: он специально выжидает, прежде чем сокращать, чтобы не устроить «пилу» из постоянных сжатий и расширений при скачущей нагрузке. Вверх он реагирует быстро, вниз — намеренно осторожно. Именно такого поведения вы и хотите от прода.
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Лайфхак</span>
+        Если HPA управляет числом реплик, уберите поле <code>replicas</code> из <code>deployment.yaml</code> совсем. Иначе каждый ваш <code>kubectl apply</code> будет возвращать число, записанное в файле, HPA следом снова его менять — и вы получите тихую войну двух контроллеров за одно и то же поле. Правило простое: у каждого поля должен быть ровно один хозяин.
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Вы выполнили <code>kubectl scale --replicas=5</code>, а затем <code>kubectl apply -f deployment.yaml</code>, где указано <code>replicas: 2</code>. Что будет?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Останется 5 реплик: команда scale имеет приоритет над манифестом</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Останется 2 реплики: apply приводит кластер к состоянию из файла</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Deployment откажется применяться из-за конфликта желаемых значений</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">HPA создан и активен, но число реплик не меняется, а в <code>TARGETS</code> висит <code>&lt;unknown&gt;</code>. Наиболее вероятная причина?</p>
+        <label class="quiz-option"><input type="radio" name="q2" value="a"> Значение maxReplicas задано слишком низким для текущей нагрузки</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="b" data-correct="true"> У контейнера не задан requests.cpu, и считать проценты просто не от чего</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="c"> Deployment использует стратегию Recreate, несовместимую с автомасштабированием</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Почему во время rolling update сервис продолжает отвечать?</p>
+        <label class="quiz-option"><input type="radio" name="q3" value="a"> Kubernetes держит запросы в очереди, пока все Pod'ы не обновятся</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="b"> Service переключается на новый ReplicaSet раньше, чем гаснет старый</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="c" data-correct="true"> Старый Pod гасится только после готовности нового, они живут вместе</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl rollout undo deployment/hello-fastapi">
+        <p class="quiz-question">Напишите команду, которая вернёт Deployment <code>hello-fastapi</code> к предыдущей версии:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl rollout restart deployment/hello-fastapi">
+        <p class="quiz-question">Напишите команду, которая перезапустит Pod'ы без простоя и без смены образа — например, после правки ConfigMap:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основные источники для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/" target="_blank" rel="noopener">Kubernetes Docs: Deployments</a> · <a href="https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/" target="_blank" rel="noopener">Kubernetes Docs: Horizontal Pod Autoscaling</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0007-ingress.html">← Урок 7: Ingress и Gateway API</a></span>
+        <span>Урок 9 (Логи и отладка) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
