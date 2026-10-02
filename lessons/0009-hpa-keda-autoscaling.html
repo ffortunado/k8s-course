@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 9 · HPA и KEDA: автомасштабирование</title>
+<meta name="description" content="Почему у штатного HPA есть потолок — только CPU и память, и минимум одна реплика, и как KEDA убирает оба ограничения: масштабирование по внешним событиям (очередь, cron, Kafka) вплоть до нуля реплик. Теория и практика на cron-триггере в minikube.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>9 / 11</span>
+      </summary>
+      <nav id="course-route" data-current="9" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 09 · Kubernetes на практике</p>
+      <h1>HPA и KEDA: автомасштабирование</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple/360" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+      <p class="lede">В уроке 8 HorizontalPodAutoscaler сам считал реплики по загрузке CPU — и честно отрабатывал, пока сигналом было ровно одно число от metrics-server. Но реальная нагрузка редко измеряется только процентом CPU: иногда сигнал — это длина очереди в RabbitMQ, отставание потребителя в Kafka или просто «сейчас ночь, трафика нет совсем». Сам HPA таких сигналов не видит, да и спуститься ниже одной реплики не умеет, сколько бы нагрузки ни было. Оба ограничения снимает один и тот же инструмент — <strong>KEDA</strong>.</p>
+
+      <h2>KEDA не заменяет HPA — он его кормит</h2>
+      <p>Первое и самое важное: <strong>KEDA (Kubernetes Event-Driven Autoscaling) не придумывает новый механизм масштабирования</strong>. Под капотом он создаёт и обслуживает обычный <code>HorizontalPodAutoscaler</code> — тот же объект, что вы руками написали в уроке 8. Разница в том, откуда HPA получает число, по которому принимает решение.</p>
+      <ul>
+        <li><strong>Без KEDA</strong> HPA умеет читать ровно то, что ему отдаёт <code>metrics-server</code>, — CPU и память контейнера.</li>
+        <li><strong>С KEDA</strong> к HPA добавляется десятки источников: длина очереди, cron-расписание, метрика из Prometheus, глубина темы Kafka, очередь в облаке — полный список называется <em>scalers</em>, их у KEDA больше сотни.</li>
+      </ul>
+      <p>Есть и вторая возможность, которой у голого HPA нет вообще: <strong>масштабирование до нуля реплик</strong>. HPA физически не может указать <code>minReplicas: 0</code> — он просто не примет такой объект. KEDA решает это иначе: пока нет сигнала о работе, KEDA вообще не создаёт HPA для этого Deployment (реплик — 0, никто не тратит ресурсы), а как только сигнал появляется, KEDA сама поднимает Deployment с 0 до 1 реплики, и только дальше управление переходит к обычному HPA.</p>
+
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 700 270" role="img" aria-labelledby="keda-diagram-title" xmlns="http://www.w3.org/2000/svg">
+          <title id="keda-diagram-title">Схема: metrics-server и внешние источники событий — очередь, cron, Kafka — подают сигналы в KEDA, KEDA создаёт и обслуживает обычный HPA, а тот уже управляет числом реплик Deployment</title>
+          <defs>
+            <marker id="arrowkeda" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--brass)"></path>
+            </marker>
+          </defs>
+
+          <rect x="8" y="18" width="188" height="48" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="102" y="47" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">metrics-server: CPU / RAM</text>
+
+          <rect x="8" y="104" width="188" height="48" rx="9" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="102" y="133" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">очередь / cron / Kafka…</text>
+
+          <text x="102" y="188" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">(scaler KEDA)</text>
+
+          <line x1="196" y1="42" x2="254" y2="120" stroke="var(--paper-line)" stroke-width="1.6" marker-end="url(#arrowkeda)"></line>
+          <line x1="196" y1="128" x2="254" y2="135" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrowkeda)"></line>
+
+          <rect x="256" y="92" width="150" height="80" rx="10" fill="var(--paper-card)" stroke="var(--brass)" stroke-width="1.6"></rect>
+          <text x="331" y="120" text-anchor="middle" class="diagram-note" fill="var(--brass-strong)">KEDA</text>
+          <text x="331" y="141" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">operator</text>
+          <text x="331" y="160" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">0 ↔ 1 реплика</text>
+
+          <line x1="408" y1="132" x2="466" y2="132" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrowkeda)"></line>
+
+          <rect x="468" y="92" width="150" height="80" rx="10" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="543" y="120" text-anchor="middle" class="diagram-note" fill="var(--text-muted)">HPA</text>
+          <text x="543" y="141" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">keda-hpa-*</text>
+          <text x="543" y="160" text-anchor="middle" class="diagram-sub" fill="var(--text-muted)">1 ↔ N реплик</text>
+
+          <line x1="543" y1="172" x2="543" y2="210" stroke="var(--brass)" stroke-width="2" marker-end="url(#arrowkeda)"></line>
+
+          <rect x="460" y="212" width="166" height="48" rx="9" fill="var(--paper-card)" stroke="var(--paper-line)"></rect>
+          <text x="543" y="241" text-anchor="middle" class="diagram-note" fill="var(--text)">Deployment hello-fastapi</text>
+        </svg>
+        <figcaption>HPA из урока 8 никуда не делся — просто теперь его создаёт и обслуживает KEDA, и сигналов у него стало больше одного.</figcaption>
+      </figure>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://keda.sh/docs/2.21/concepts/" target="_blank" rel="noopener">KEDA Concepts</a> и <a href="https://keda.sh/docs/2.21/concepts/scaling-deployments/" target="_blank" rel="noopener">Scaling Deployments</a>
+      </div>
+
+      <h2>ScaledObject: манифест, который заменяет HPA</h2>
+      <p>Вместо <code>HorizontalPodAutoscaler</code> вы пишете объект <code>ScaledObject</code> — он ссылается на тот же Deployment и описывает те же границы, плюс список триггеров:</p>
+      <pre><code>apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: hello-fastapi
+spec:
+  scaleTargetRef:
+    name: hello-fastapi
+  minReplicaCount: 0
+  maxReplicaCount: 4
+  cooldownPeriod: 30
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Etc/UTC
+        start: "10 14 * * *"
+        end: "13 14 * * *"
+        desiredReplicas: "3"</code></pre>
+      <p><code>scaleTargetRef</code> работает так же, как в обычном HPA. <code>minReplicaCount</code> и <code>maxReplicaCount</code> — те же границы, только теперь ноль — законное значение. <code>cooldownPeriod</code> — сколько секунд ждать после того, как триггер перестал требовать реплики, прежде чем сократить их до <code>minReplicaCount</code> (по умолчанию 300 секунд; здесь поставлено 30 — исключительно чтобы не ждать пять минут в учебном примере). Для cron-триггера <code>start</code> и <code>end</code> — обычное cron-выражение «минута час * * *» в часовом поясе из <code>timezone</code>, а <code>desiredReplicas</code> — сколько реплик держать внутри этого окна; вне окна KEDA считает, что сигнала нет.</p>
+
+      <div class="callout">
+        <span class="callout-label">Почему практика именно на cron</span>
+        У по-настоящему событийных триггеров — очередь, Kafka — есть один практический минус для учебного урока: сначала нужно поднять в кластере саму очередь, то есть ещё один сервис и ещё один урок только на его установку. Cron-триггер не требует ничего, кроме самого KEDA, и показывает ровно то же самое устройство — внешний относительно CPU/RAM сигнал, который включает и выключает реплики, — без лишней инфраструктуры. Таблица с остальными триггерами будет ниже.
+      </div>
+
+      <h2>Практика: установите KEDA и промасштабируйте по расписанию</h2>
+      <p>Понадобится Deployment <code>hello-fastapi</code> из урока 3. Если у вас всё ещё применён <code>hpa.yaml</code> из урока 8 — удалите его: мы создадим для того же Deployment объект KEDA, а два HPA на одном Deployment — это та же «тихая война двух контроллеров», о которой шла речь в прошлом уроке.</p>
+      <pre><code>kubectl delete -f hpa.yaml --ignore-not-found</code></pre>
+
+      <ol class="steps">
+        <li>
+          Установите KEDA. Как и Gateway API в уроке 7, в Kubernetes она не встроена — это оператор и набор CRD, которые ставятся манифестом:
+          <pre><code>KEDA=https://github.com/kedacore/keda/releases/download
+
+kubectl apply --server-side -f $KEDA/v2.21.0/keda-2.21.0.yaml</code></pre>
+          <p>Манифест сам создаёт пространство имён <code>keda</code>. Дождитесь, пока оба Pod'а станут готовы:</p>
+          <pre><code>kubectl get pods -n keda</code></pre>
+          <p>Их два: <code>keda-operator</code> — следит за <code>ScaledObject</code> и создаёт под них HPA, и <code>keda-operator-metrics-apiserver</code> — отдаёт Kubernetes значения с нестандартных метрик.</p>
+        </li>
+        <li>
+          Узнайте текущее время в UTC — от него будете отталкиваться при выборе окна:
+          <pre><code>date -u +%H:%M</code></pre>
+          <p>На Windows без WSL — тот же час и минуту возьмите из правого нижнего угла, переведя в UTC (зимой в Москве это минус 3 часа).</p>
+        </li>
+        <li>
+          Создайте <code>scaledobject.yaml</code>, подставив вместо <code>HH:MM</code> время из прошлого шага плюс одна минута (поле <code>start</code>) и плюс четыре минуты (поле <code>end</code>) — так у вас будет три минуты, чтобы понаблюдать за реплицированием в активном окне:
+          <pre><code>apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: hello-fastapi
+spec:
+  scaleTargetRef:
+    name: hello-fastapi
+  minReplicaCount: 0
+  maxReplicaCount: 4
+  cooldownPeriod: 30
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Etc/UTC
+        start: "MM HH * * *"
+        end: "MM HH * * *"
+        desiredReplicas: "3"</code></pre>
+          <p>Если сейчас (в UTC) 14:27 — <code>start</code> получит <code>"28 14 * * *"</code>, а <code>end</code> — <code>"31 14 * * *"</code>. Переход через полночь или через час считайте как обычно: 14:58 плюс четыре минуты — это 15:02.</p>
+        </li>
+        <li>
+          Примените и сразу гляньте, что создалось:
+          <pre><code>kubectl apply -f scaledobject.yaml
+kubectl get scaledobject
+kubectl get deploy hello-fastapi</code></pre>
+          <p>До наступления <code>start</code> в колонке <code>READY</code> у ScaledObject должно быть <code>True</code>, а реплик у Deployment — <code>0</code>: KEDA уже взяла его под управление и свела к нулю, хотя окно ещё не началось.</p>
+        </li>
+        <li>
+          В отдельном терминале запустите наблюдение и дождитесь начала окна:
+          <pre><code>kubectl get pods --watch</code></pre>
+          <p>Ровно в минуту из <code>start</code> появятся три Pod'а — тот же rolling-механизм из урока 8, просто инициированный не вами, а KEDA.</p>
+        </li>
+        <li>
+          Посмотрите на HPA, которого вы не писали:
+          <pre><code>kubectl get hpa</code></pre>
+          <p>В списке — объект <code>keda-hpa-hello-fastapi</code>. Это тот самый <code>horizontalPodAutoscalerConfig</code> из спеки: KEDA сама назвала и создала его по умолчанию. <code>kubectl describe scaledobject hello-fastapi</code> покажет условие <code>Active: True</code> ровно на время, пока сейчас внутри cron-окна.</p>
+        </li>
+        <li>
+          Дождитесь <code>end</code> и продолжайте смотреть на первый терминал: через несколько секунд после окончания окна (вы поставили <code>cooldownPeriod: 30</code>) реплики вернутся к <code>0</code>. Остановите наблюдение <kbd>Ctrl+C</kbd>.
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Если реплики не появились к началу окна</span>
+        Самая частая причина — часовой пояс: <code>Etc/UTC</code> в манифесте и время из <code>date -u</code> должны совпадать, не перепутайте с локальным. Вторая по частоте — опечатка в cron-выражении; проверьте условия через <code>kubectl describe scaledobject hello-fastapi</code>, там прямо пишут, что не так. Третья — старый <code>hpa.yaml</code> из урока 8 всё ещё применён и конфликтует за то же поле; удалите его командой из начала практики.
+      </div>
+
+      <h2>Другие триггеры: cron — не главный сценарий в проде</h2>
+      <p>В реальных кластерах расписание — скорее частный случай. Чаще KEDA подключают к системам, которые и так копят работу, чтобы число реплик следовало за фактической очередью задач, а не за процентом CPU, который до очереди ещё не добрался:</p>
+
+      <table>
+        <thead>
+          <tr><th>Scaler</th><th>Сигнал масштабирования</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>rabbitmq</code></td><td>Число сообщений в очереди RabbitMQ</td></tr>
+          <tr><td><code>kafka</code></td><td>Отставание consumer group от конца топика (consumer lag)</td></tr>
+          <tr><td><code>prometheus</code></td><td>Результат произвольного PromQL-запроса</td></tr>
+          <tr><td><code>postgresql</code></td><td>Результат SQL-запроса, например размер очереди задач в таблице</td></tr>
+          <tr><td><code>aws-sqs-queue</code> / <code>azure-queue</code></td><td>Длина очереди в облачном сервисе</td></tr>
+        </tbody>
+      </table>
+      <p>Смена триггера почти всегда — замена одного блока <code>triggers</code> в том же <code>ScaledObject</code>; всё остальное (<code>scaleTargetRef</code>, границы реплик, созданный HPA) устроено одинаково независимо от источника сигнала.</p>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Полный список — <a href="https://keda.sh/docs/2.21/scalers/" target="_blank" rel="noopener">KEDA Scalers</a>
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Что на самом деле делает KEDA, когда вы применяете ScaledObject?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Полностью заменяет HPA собственным независимым контроллером</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Создаёт и обслуживает обычный HPA, подключая к нему новые источники сигналов</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Отключает metrics-server и считает нагрузку самостоятельно изнутри Pod'ов</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Почему обычный HPA не может держать <code>minReplicas: 0</code>, а KEDA с ScaledObject — может?</p>
+        <label class="quiz-option"><input type="radio" name="q2" value="a"> HPA требует отдельную лицензию на масштабирование до нуля реплик</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="b" data-correct="true"> Переход 0↔1 реплику берёт на себя сама KEDA, HPA включается только после</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="c"> HPA пересоздаётся KEDA заново каждую секунду, поэтому ограничение снимается</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">К Deployment применены и <code>hpa.yaml</code> из урока 8, и cron-<code>ScaledObject</code> из этого урока. Что происходит?</p>
+        <label class="quiz-option"><input type="radio" name="q3" value="a"> KEDA сама находит и удаляет чужой HPA при создании своего</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="b" data-correct="true"> Два HPA спорят за одно и то же поле реплик одного Deployment</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="c"> API сервер отклонит ScaledObject с ошибкой дубликата конфигурации</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get scaledobject">
+        <p class="quiz-question">Напишите команду, которая покажет все ScaledObject в текущем пространстве имён:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl describe scaledobject hello-fastapi">
+        <p class="quiz-question">Напишите команду, которая покажет условия (например, <code>Active</code>) ScaledObject с именем <code>hello-fastapi</code>:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основные источники для этого урока:</strong> <a href="https://keda.sh/docs/2.21/concepts/" target="_blank" rel="noopener">KEDA Concepts</a> · <a href="https://keda.sh/docs/2.21/concepts/scaling-deployments/" target="_blank" rel="noopener">KEDA: Scaling Deployments</a> · <a href="https://keda.sh/docs/2.21/reference/scaledobject-spec/" target="_blank" rel="noopener">KEDA: ScaledObject Spec</a> · <a href="https://keda.sh/docs/2.21/scalers/" target="_blank" rel="noopener">KEDA Scalers</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0008-scaling-rollouts.html">← Урок 8: Масштабирование и обновления</a></span>
+        <span>Урок 10 (Логи и отладка) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>

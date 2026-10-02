@@ -20,7 +20,7 @@
     { n: 6, slug: "0006-health-probes", title: "Health-пробы", duration: "30–35 мин", available: true },
     { n: 7, slug: "0007-ingress", title: "Ingress и Gateway API", duration: "50–60 мин", available: true },
     { n: 8, slug: "0008-scaling-rollouts", title: "Масштабирование и обновления", duration: "40–50 мин", available: true },
-    { n: 9, slug: "0009-hpa-keda-autoscaling", title: "HPA и KEDA: автомасштабирование", duration: "35–45 мин", available: false },
+    { n: 9, slug: "0009-hpa-keda-autoscaling", title: "HPA и KEDA: автомасштабирование", duration: "35–45 мин", available: true },
     { n: 10, slug: "0010-logs-debug", title: "Логи и отладка", duration: "30–35 мин", available: false },
     { n: 11, slug: "0011-capstone-real-server", title: "Капстоун: реальный сервер", duration: "60–90 мин", available: false }
   ];
