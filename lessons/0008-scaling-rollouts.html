@@ -217,7 +217,7 @@ kubectl rollout status deployment/hello-fastapi</code></pre>
 
       <div class="callout">
         <span class="callout-label">Лайфхак: перезапуск без смены образа</span>
-        Иногда нужно перезапустить Pod'ы, ничего не меняя в образе, — например, вы поправили ConfigMap или Secret из урока 5. Переменные окружения читаются один раз при старте процесса, поэтому работающие Pod'ы новых значений не увидят, сколько ни применяй <code>configmap.yaml</code>. Правильный способ — не удалять Pod'ы руками, а сделать <code>kubectl rollout restart deployment/hello-fastapi</code>: это обычный rolling update, только на ту же самую версию. Сервис при этом не прерывается.
+        Иногда нужно перезапустить Pod'ы, ничего не меняя в образе, — например, вы поправили ConfigMap или Secret из урока 5. Переменные окружения читаются один раз при старте процесса, поэтому работающие Pod'ы новых значений не увидят, сколько ни применяй <code>configmap.yaml</code>. Правильный способ — не удалять Pod'ы руками, а сделать <code>kubectl rollout restart deployment/hello-fastapi</code>: это обычный rolling update, только на ту же самую версию. Сервис при этом не прерывается. Если манифесты деплоятся через Helm, этот шаг обычно вообще не нужен руками: в шаблон Deployment добавляют аннотацию вроде <code>checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}</code> — любое изменение ConfigMap меняет хэш, аннотация Pod-шаблона меняется вместе с ним, и Deployment сам запускает rolling update. Но это уже про Helm, он за рамками этого курса.
       </div>
 
       <h2>Практика, часть 3: пусть кластер считает реплики сам</h2>
@@ -283,6 +283,11 @@ kubectl run loader --rm -it --restart=Never --image=busybox \
         Если HPA управляет числом реплик, уберите поле <code>replicas</code> из <code>deployment.yaml</code> совсем. Иначе каждый ваш <code>kubectl apply</code> будет возвращать число, записанное в файле, HPA следом снова его менять — и вы получите тихую войну двух контроллеров за одно и то же поле. Правило простое: у каждого поля должен быть ровно один хозяин.
       </div>
 
+      <div class="callout">
+        <span class="callout-label">Дальше: автомасштабирование не только по CPU</span>
+        HPA из коробки умеет мерить только то, что отдаёт metrics-server, — CPU и память. Если сигналом для масштабирования должна быть длина очереди в RabbitMQ, число сообщений в Kafka или метрика из Prometheus, на сцену выходит <strong>KEDA</strong> (Kubernetes Event-Driven Autoscaling) — он подключает внешние источники метрик к тому же HPA и умеет масштабировать Deployment вплоть до нуля реплик между всплесками нагрузки. Тема достаточно большая для отдельного урока — это и будет урок 9.
+      </div>
+
       <h2>Проверьте себя</h2>
 
       <div class="quiz" data-quiz="mc">
@@ -332,7 +337,7 @@ kubectl run loader --rm -it --restart=Never --image=busybox \
 
       <nav class="lesson-nav">
         <span><a href="../lessons/0007-ingress.html">← Урок 7: Ingress и Gateway API</a></span>
-        <span>Урок 9 (Логи и отладка) — готовится</span>
+        <span>Урок 9 (HPA и KEDA) — готовится</span>
       </nav>
     </article>
   </main>
