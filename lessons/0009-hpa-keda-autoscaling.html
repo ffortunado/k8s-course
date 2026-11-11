@@ -225,6 +225,50 @@ kubectl get deploy hello-fastapi</code></pre>
         Полный список — <a href="https://keda.sh/docs/2.21/scalers/" target="_blank" rel="noopener">KEDA Scalers</a>
       </div>
 
+      <h2>Не только ScaledObject: ScaledJob для задач «отработал и завершился»</h2>
+      <p>У <code>ScaledObject</code> есть слабое место, которое легко не заметить на cron-примере: он масштабирует <strong>долгоживущие</strong> реплики Deployment. Когда сигнал падает, HPA сокращает реплики — и сам выбирает, какой Pod удалить. Если воркер в этот момент на середине трёхчасовой задачи, работа прервётся. В документации KEDA это разобрано как отдельная проблема «long-running executions»: можно тянуть время через <code>terminationGracePeriodSeconds</code> и <code>preStop</code>-хук, но Pod будет висеть в <code>Terminating</code>, а вторая, более чистая альтернатива — запускать такую работу не в Deployment, а в Job.</p>
+      <p>Для этого у KEDA есть второй ресурс — <strong><code>ScaledJob</code></strong>. Он не управляет репликами и не держит Pod'ы «про запас»: на каждое обнаруженное событие (например, сообщение в очереди) он создаёт обычный Kubernetes <code>Job</code>. Pod этого Job забирает одну единицу работы, доводит её до конца и завершается. Нет событий — нет и Job'ов.</p>
+      <pre><code>apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: queue-worker
+spec:
+  jobTargetRef:                 # шаблон Job вместо scaleTargetRef
+    template:
+      spec:
+        containers:
+        - name: worker
+          image: my-worker:1
+        restartPolicy: Never
+  pollingInterval: 10           # как часто KEDA опрашивает источник
+  maxReplicaCount: 30           # не больше 30 Job'ов одновременно
+  successfulJobsHistoryLimit: 3 # сколько завершённых Job'ов хранить
+  triggers:
+  - type: rabbitmq
+    metadata:
+      queueName: tasks
+      queueLength: "1"</code></pre>
+      <p>Триггеры — те же самые, что и у <code>ScaledObject</code>; меняется только то, <em>что</em> создаётся в ответ на сигнал. Типичные сценарии — self-hosted агенты CI/CD (раннеры, которые берут одну сборку и умирают), обработка видео, тяжёлые отчёты, ML-батчи: всё, где задача длинная и прерывать её на полпути нельзя.</p>
+
+      <table>
+        <thead>
+          <tr><th></th><th><code>ScaledObject</code></th><th><code>ScaledJob</code></th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Чем управляет</td><td>Числом реплик Deployment / StatefulSet</td><td>Созданием новых Job</td></tr>
+          <tr><td>Под капотом</td><td>Обычный HPA</td><td>Сама KEDA создаёт Job'ы, HPA нет</td></tr>
+          <tr><td>Жизнь Pod'а</td><td>Долгая, разбирает поток задач</td><td>Одна задача — и завершение</td></tr>
+          <tr><td>Подходит для</td><td>API, потребители с короткими задачами</td><td>CI-раннеры, долгие batch-задачи</td></tr>
+        </tbody>
+      </table>
+
+      <p>Обычные <code>Job</code> и <code>CronJob</code> мы в курсе ещё не разбирали, поэтому здесь <code>ScaledJob</code> — только обзор без практики: важно знать, что такой инструмент есть и когда он лучше <code>ScaledObject</code>. И третий ресурс KEDA, который понадобится, как только вы подключите настоящую очередь вместо cron, — <strong><code>TriggerAuthentication</code></strong> (и его кластерная версия <code>ClusterTriggerAuthentication</code>): он хранит, как KEDA авторизуется в источнике событий — через Secret, переменные окружения или облачную identity, — чтобы пароли не лежали прямо в манифесте <code>ScaledObject</code>.</p>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        <a href="https://keda.sh/docs/2.21/concepts/scaling-jobs/" target="_blank" rel="noopener">KEDA: Scaling Jobs</a> · <a href="https://keda.sh/docs/2.21/reference/scaledjob-spec/" target="_blank" rel="noopener">ScaledJob Spec</a> · <a href="https://keda.sh/docs/2.21/concepts/authentication/" target="_blank" rel="noopener">KEDA: Authentication</a>
+      </div>
+
       <h2>Проверьте себя</h2>
 
       <div class="quiz" data-quiz="mc">
@@ -254,6 +298,15 @@ kubectl get deploy hello-fastapi</code></pre>
         <p class="quiz-feedback" hidden></p>
       </div>
 
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Воркер обрабатывает одно сообщение из очереди около часа, и прерывать его посередине нельзя. Что выбрать?</p>
+        <label class="quiz-option"><input type="radio" name="q4" value="a"> ScaledObject с большим cooldownPeriod, чтобы HPA реже убирал Pod'ы</label>
+        <label class="quiz-option"><input type="radio" name="q4" value="b" data-correct="true"> ScaledJob: на каждое сообщение отдельный Job, который сам завершится</label>
+        <label class="quiz-option"><input type="radio" name="q4" value="c"> Обычный HPA по CPU с запасом реплик, чтобы хватило на всю очередь</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
       <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl get scaledobject">
         <p class="quiz-question">Напишите команду, которая покажет все ScaledObject в текущем пространстве имён:</p>
         <input type="text" class="quiz-input" placeholder="kubectl ...">
@@ -269,7 +322,7 @@ kubectl get deploy hello-fastapi</code></pre>
       </div>
 
       <footer class="sources">
-        <strong>Основные источники для этого урока:</strong> <a href="https://keda.sh/docs/2.21/concepts/" target="_blank" rel="noopener">KEDA Concepts</a> · <a href="https://keda.sh/docs/2.21/concepts/scaling-deployments/" target="_blank" rel="noopener">KEDA: Scaling Deployments</a> · <a href="https://keda.sh/docs/2.21/reference/scaledobject-spec/" target="_blank" rel="noopener">KEDA: ScaledObject Spec</a> · <a href="https://keda.sh/docs/2.21/scalers/" target="_blank" rel="noopener">KEDA Scalers</a> (официальная документация).
+        <strong>Основные источники для этого урока:</strong> <a href="https://keda.sh/docs/2.21/concepts/" target="_blank" rel="noopener">KEDA Concepts</a> · <a href="https://keda.sh/docs/2.21/concepts/scaling-deployments/" target="_blank" rel="noopener">KEDA: Scaling Deployments</a> · <a href="https://keda.sh/docs/2.21/reference/scaledobject-spec/" target="_blank" rel="noopener">KEDA: ScaledObject Spec</a> · <a href="https://keda.sh/docs/2.21/scalers/" target="_blank" rel="noopener">KEDA Scalers</a> · <a href="https://keda.sh/docs/2.21/concepts/scaling-jobs/" target="_blank" rel="noopener">KEDA: Scaling Jobs</a> (официальная документация).
       </footer>
 
       <nav class="lesson-nav">
