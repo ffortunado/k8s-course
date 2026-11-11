@@ -29,7 +29,7 @@
     <details class="route-toggle" open>
       <summary class="route-summary">
         <span>Маршрут курса</span>
-        <span class="route-progress" data-route-progress>9 / 11</span>
+        <span class="route-progress" data-route-progress>9 / 12</span>
       </summary>
       <nav id="course-route" data-current="9" data-base=""></nav>
     </details>
@@ -262,7 +262,7 @@ spec:
         </tbody>
       </table>
 
-      <p>Обычные <code>Job</code> и <code>CronJob</code> мы в курсе ещё не разбирали, поэтому здесь <code>ScaledJob</code> — только обзор без практики: важно знать, что такой инструмент есть и когда он лучше <code>ScaledObject</code>. И третий ресурс KEDA, который понадобится, как только вы подключите настоящую очередь вместо cron, — <strong><code>TriggerAuthentication</code></strong> (и его кластерная версия <code>ClusterTriggerAuthentication</code>): он хранит, как KEDA авторизуется в источнике событий — через Secret, переменные окружения или облачную identity, — чтобы пароли не лежали прямо в манифесте <code>ScaledObject</code>.</p>
+      <p>Здесь <code>ScaledJob</code> — только обзор без практики: важно знать, что такой инструмент есть и когда он лучше <code>ScaledObject</code>. Сами <code>Job</code> и <code>CronJob</code>, на которых он построен, разбираем руками в <a href="../lessons/0010-job-cronjob.html">следующем уроке</a>. И третий ресурс KEDA, который понадобится, как только вы подключите настоящую очередь вместо cron, — <strong><code>TriggerAuthentication</code></strong> (и его кластерная версия <code>ClusterTriggerAuthentication</code>): он хранит, как KEDA авторизуется в источнике событий — через Secret, переменные окружения или облачную identity, — чтобы пароли не лежали прямо в манифесте <code>ScaledObject</code>.</p>
 
       <div class="callout">
         <span class="callout-label">Источник</span>
@@ -327,7 +327,7 @@ spec:
 
       <nav class="lesson-nav">
         <span><a href="../lessons/0008-scaling-rollouts.html">← Урок 8: Масштабирование и обновления</a></span>
-        <span>Урок 10 (Логи и отладка) — готовится</span>
+        <span><a href="../lessons/0010-job-cronjob.html">Урок 10: Job и CronJob →</a></span>
       </nav>
     </article>
   </main>

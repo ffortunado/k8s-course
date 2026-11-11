@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Урок 10 · Job и CronJob: задачи, которые должны закончиться</title>
+<meta name="description" content="Чем Job отличается от Deployment, как Kubernetes повторяет упавшие задачи (backoffLimit), запускает их параллельно (completions, parallelism) и по расписанию через CronJob. Практика в minikube на образе FastAPI-сервиса.">
+<link rel="icon" type="image/x-icon" href="../favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="chart-nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="19"/><path d="M5 13c0 4 3 6.5 7 6.5s7-2.5 7-6.5"/><line x1="4" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="20" y2="12"/></svg>
+      </span>
+      <span class="brand-word">
+        <span class="brand-title">Kubernetes<br>на практике</span>
+      </span>
+    </a>
+
+    <details class="route-toggle" open>
+      <summary class="route-summary">
+        <span>Маршрут курса</span>
+        <span class="route-progress" data-route-progress>10 / 12</span>
+      </summary>
+      <nav id="course-route" data-current="10" data-base=""></nav>
+    </details>
+
+    <div class="ref-section">
+      <p class="ref-heading">Справочники</p>
+      <nav id="course-references" data-base="../reference/"></nav>
+    </div>
+
+    <div class="chart-footer">
+      <div class="chart-footer-group">
+        <span class="chart-footer-label">Сообщество</span>
+        <a class="chart-channel" href="https://t.me/python_simple" target="_blank" rel="noopener">
+          <img class="chart-channel-avatar" src="../assets/pythonsimple.png" alt="">
+          <span>Обсуждение · @python_simple</span>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page-frame">
+    <article class="page">
+      <p class="kicker">Урок 10 · Kubernetes на практике</p>
+      <h1>Job и CronJob: задачи, которые должны закончиться</h1>
+      <p class="lesson-help">Что-то не запустилось или осталось непонятным? Задайте вопрос в комментариях к <a href="https://t.me/python_simple" target="_blank" rel="noopener">разбору этого урока в канале</a> — разберёмся вместе.</p>
+
+      <p class="lede">Всё, что мы запускали до сих пор, должно работать вечно: веб-сервис упал — Kubernetes его поднимет, и так без конца. Но у любого реального проекта есть и другая работа — миграция базы перед релизом, ночной отчёт, пересчёт кеша, сборка в CI. Такая задача должна <em>один раз дойти до конца и завершиться</em>, а «поднять заново после успешного выхода» для неё — ошибка. Для этого в Kubernetes есть два объекта: <strong>Job</strong> и <strong>CronJob</strong>.</p>
+
+      <h2>Deployment держит, Job — доводит до конца</h2>
+      <p>Попробуйте мысленно засунуть скрипт миграции в Deployment из урока 3. Скрипт отработает и выйдет с кодом 0 — а Deployment поймёт это как «контейнер умер» и запустит его снова. Потом снова. Вскоре Pod окажется в <code>CrashLoopBackOff</code>, а миграция прогонится десяток раз. Deployment в принципе не знает понятия «задача выполнена»: его работа — <em>держать</em> нужное число живых реплик.</p>
+      <p><strong>Job</strong> устроен наоборот: он создаёт один или несколько Pod'ов и повторяет попытки, пока заданное число из них не завершится <em>успешно</em>. После этого Job помечается выполненным и больше ничего не запускает. Поэтому у Pod'ов внутри Job разрешены только две политики перезапуска — <code>restartPolicy: Never</code> или <code>OnFailure</code>; привычная по Deployment <code>Always</code> здесь запрещена.</p>
+
+      <table>
+        <thead>
+          <tr><th></th><th>Deployment</th><th>Job</th><th>CronJob</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Цель</td><td>Держать N живых реплик</td><td>Довести задачу до успеха</td><td>Создавать Job по расписанию</td></tr>
+          <tr><td>Выход с кодом 0</td><td>Перезапуск контейнера</td><td>Задача выполнена</td><td>Этот запуск выполнен</td></tr>
+          <tr><td>Примеры</td><td>API, веб-сервис</td><td>Миграция, разовый импорт</td><td>Ночной отчёт, бэкап, чистка</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        Официальная документация — <a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/" target="_blank" rel="noopener">Kubernetes: Jobs</a> и <a href="https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/" target="_blank" rel="noopener">CronJob</a>
+      </div>
+
+      <h2>Анатомия Job</h2>
+      <p>Манифест Job почти полностью состоит из знакомого шаблона Pod'а — того же, что сидит внутри Deployment. Новых полей немного:</p>
+      <pre><code>apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hello-job
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: task
+          image: hello-fastapi:0.4
+          command: ["python", "-c"]
+          args:
+            - |
+              import time
+              for i in range(1, 6):
+                  print(f"Обрабатываю пачку {i}/5", flush=True)
+                  time.sleep(2)
+              print("Готово")</code></pre>
+      <ul>
+        <li><code>backoffLimit</code> — сколько раз повторить упавшую задачу, прежде чем объявить Job проваленным. По умолчанию 6. Повторы идут не сразу, а с растущей паузой: 10 секунд, 20, 40 и так далее, максимум до десяти минут — чтобы сломанная задача не молотила кластер.</li>
+        <li><code>activeDeadlineSeconds</code> — общий лимит времени на весь Job. Как только он истёк, все Pod'ы останавливаются, а Job получает статус <code>Failed</code> с причиной <code>DeadlineExceeded</code> — даже если попытки по <code>backoffLimit</code> ещё остались.</li>
+        <li><code>ttlSecondsAfterFinished</code> — через сколько секунд после завершения удалить Job вместе с его Pod'ами. Без этого поля завершённые Job копятся в кластере, пока вы не удалите их руками.</li>
+        <li><code>restartPolicy</code>: при <code>Never</code> каждая неудачная попытка — это новый Pod, а упавшие остаются лежать со статусом <code>Error</code> (удобно читать логи каждой попытки). При <code>OnFailure</code> kubelet перезапускает контейнер внутри того же Pod'а.</li>
+      </ul>
+      <p>Обратите внимание на образ: это тот же <code>hello-fastapi</code>, что крутится как веб-сервис, — просто с другой командой. Так часто и делают в жизни: миграции и служебные скрипты лежат в том же образе, что и приложение, а Job подменяет <code>command</code>.</p>
+
+      <h2>Практика: одноразовая задача и задача, которая падает</h2>
+      <p>Понадобится запущенный minikube и любой образ <code>hello-fastapi</code>, загруженный в него в прошлых уроках (в примерах — <code>0.4</code> из урока 8; подставьте свой тег, если у вас другой). Проверить можно так:</p>
+      <pre><code>minikube image ls | grep hello-fastapi</code></pre>
+
+      <ol class="steps">
+        <li>
+          Сохраните манифест из раздела выше в <code>hello-job.yaml</code>. Во втором терминале запустите наблюдение за Pod'ами, а в первом примените манифест:
+          <pre><code>kubectl get pods --watch</code></pre>
+          <pre><code>kubectl apply -f hello-job.yaml</code></pre>
+          <p>Pod <code>hello-job-xxxxx</code> пройдёт <code>ContainerCreating</code> → <code>Running</code> → <code>Completed</code> и на этом остановится. Никакого перезапуска — в отличие от Deployment.</p>
+        </li>
+        <li>
+          Посмотрите на сам Job и на то, что напечатала задача:
+          <pre><code>kubectl get job hello-job
+kubectl logs job/hello-job</code></pre>
+          <p>В колонке <code>COMPLETIONS</code> — <code>1/1</code>, в логах — пять пачек и «Готово». Pod остался в кластере именно для этого: чтобы логи можно было прочитать после завершения. Через десять минут (<code>ttlSecondsAfterFinished: 600</code>) Kubernetes сам удалит и Job, и Pod.</p>
+        </li>
+        <li>
+          Теперь сломаем задачу. Создайте <code>fail-job.yaml</code> — скрипт, который всегда выходит с ошибкой:
+          <pre><code>apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fail-job
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: task
+          image: hello-fastapi:0.4
+          command: ["python", "-c"]
+          args:
+            - |
+              import sys
+              print("Не могу подключиться к базе")
+              sys.exit(1)</code></pre>
+          <pre><code>kubectl apply -f fail-job.yaml</code></pre>
+          <p>В окне с <code>--watch</code> по очереди появятся <strong>три</strong> Pod'а <code>fail-job-…</code>, каждый закончится статусом <code>Error</code>: первая попытка и две повторные по <code>backoffLimit: 2</code>. Заметьте паузы между ними — сначала около 10 секунд, потом около 20.</p>
+        </li>
+        <li>
+          Узнайте у Kubernetes, почему Job сдался:
+          <pre><code>kubectl describe job fail-job</code></pre>
+          <p>Внизу, в <code>Events</code>, будет сообщение о том, что Job достиг лимита повторов (<code>BackoffLimitExceeded</code>), а в <code>Pods Statuses</code> — <code>0 Succeeded / 3 Failed</code>. Логи любой из попыток доступны как обычно: <code>kubectl logs</code> с именем конкретного Pod'а.</p>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Если Pod застрял в ErrImagePull</span>
+        Kubernetes не нашёл образ внутри minikube и пошёл искать его в Docker Hub. Сверьте тег в манифесте с выводом <code>minikube image ls</code> или загрузите образ заново: <code>minikube image load hello-fastapi:0.4</code> — как в уроке 3. После правки манифеста удалите Job (<code>kubectl delete job hello-job</code>) и примените снова: шаблон Pod'а у существующего Job менять нельзя.
+      </div>
+
+      <h2>Параллельно: completions и parallelism</h2>
+      <p>Одна задача — частный случай. Если нужно обработать, скажем, четыре одинаковые пачки данных, Job умеет запускать Pod'ы пачками:</p>
+      <ul>
+        <li><code>completions</code> — сколько Pod'ов должны завершиться успешно, чтобы Job считался выполненным;</li>
+        <li><code>parallelism</code> — сколько из них могут работать одновременно.</li>
+      </ul>
+      <p>Если оба поля не указаны, оба равны 1 — это и был наш <code>hello-job</code>. Проверьте вариант с параллельностью: скопируйте <code>hello-job.yaml</code> в <code>batch-job.yaml</code>, поменяйте <code>name</code> на <code>batch-job</code> и добавьте в <code>spec</code> рядом с <code>backoffLimit</code> две строки:</p>
+      <pre><code>  completions: 4
+  parallelism: 2</code></pre>
+      <pre><code>kubectl apply -f batch-job.yaml</code></pre>
+      <p>В окне наблюдения Pod'ы пойдут парами: два работают, два ждут. <code>kubectl get job batch-job</code> покажет, как растёт счётчик: <code>0/4</code>, <code>2/4</code>, <code>4/4</code>.</p>
+
+      <h2>CronJob: Job по расписанию</h2>
+      <p><strong>CronJob</strong> сам ничего не выполняет — он по расписанию создаёт обычные Job из шаблона <code>jobTemplate</code>. Поэтому всё, что вы только что узнали про Job (<code>backoffLimit</code>, <code>restartPolicy</code>, логи), работает внутри CronJob без изменений.</p>
+      <pre><code>apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report
+spec:
+  schedule: "* * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: hello-fastapi:0.4
+              command: ["python", "-c"]
+              args:
+                - |
+                  from datetime import datetime, timezone
+                  now = datetime.now(timezone.utc)
+                  print("Отчёт за", now.isoformat(timespec="seconds"))</code></pre>
+      <ul>
+        <li><code>schedule</code> — обычное cron-выражение «минута час день месяц день-недели», то же, что в KEDA из урока 9. <code>"* * * * *"</code> — каждую минуту (только для учебного примера), <code>"0 3 * * 1"</code> — по понедельникам в 03:00. Есть и сокращения: <code>@hourly</code>, <code>@daily</code>, <code>@weekly</code>.</li>
+        <li><code>timeZone</code> — часовой пояс расписания. Без него время считается в поясе самого кластера — частая причина «отчёт приходит на три часа позже».</li>
+        <li><code>concurrencyPolicy</code> — что делать, если пора запускаться, а прошлый запуск ещё не закончился: <code>Allow</code> (по умолчанию) — запустить параллельно, <code>Forbid</code> — пропустить новый запуск, <code>Replace</code> — остановить старый и запустить новый.</li>
+        <li><code>successfulJobsHistoryLimit</code> / <code>failedJobsHistoryLimit</code> — сколько последних успешных и упавших Job хранить (по умолчанию 3 и 1). Старые CronJob удаляет сам.</li>
+      </ul>
+
+      <div class="callout alert">
+        <span class="callout-label">Задача должна быть идемпотентной</span>
+        Документация Kubernetes прямо предупреждает: CronJob создаёт Job <em>примерно</em> один раз за каждое срабатывание расписания. В редких случаях Job может создаться дважды или не создаться вовсе. Поэтому повторный запуск той же задачи не должен ничего ломать: отчёт за тот же час перезаписывается, а не дублируется, письмо не уходит второй раз, деньги не списываются дважды.
+      </div>
+
+      <h2>Практика: отчёт каждую минуту</h2>
+      <ol class="steps">
+        <li>
+          Сохраните манифест выше в <code>report-cron.yaml</code> и примените:
+          <pre><code>kubectl apply -f report-cron.yaml
+kubectl get cronjob report</code></pre>
+          <p>В выводе — расписание, флаг <code>SUSPEND</code> (<code>False</code>) и время последнего запуска (<code>LAST SCHEDULE</code>), пока пустое.</p>
+        </li>
+        <li>
+          Понаблюдайте, как появляются Job:
+          <pre><code>kubectl get jobs --watch</code></pre>
+          <p>В начале каждой минуты появится новый Job с именем вида <code>report-29123456</code> — CronJob добавляет к своему имени числовой суффикс. Подождите четыре-пять минут: Job'ов в списке больше не станет больше трёх, лишние CronJob удаляет сам по <code>successfulJobsHistoryLimit</code>. Остановите наблюдение <kbd>Ctrl+C</kbd>.</p>
+        </li>
+        <li>
+          Прочитайте отчёт любого из запусков, подставив имя Job из списка:
+          <pre><code>kubectl logs job/report-29123456</code></pre>
+        </li>
+        <li>
+          Запустите задачу вручную, не дожидаясь расписания, — так делают, когда ночной отчёт нужен прямо сейчас или чтобы проверить CronJob сразу после деплоя:
+          <pre><code>kubectl create job report-manual --from=cronjob/report
+kubectl logs job/report-manual</code></pre>
+          <p>Если логи пока пустые, подождите пару секунд, пока Pod стартует, и повторите команду.</p>
+        </li>
+        <li>
+          Поставьте расписание на паузу. В <code>report-cron.yaml</code> добавьте в <code>spec</code> строку <code>suspend: true</code> и примените файл заново:
+          <pre><code>kubectl apply -f report-cron.yaml
+kubectl get cronjob report</code></pre>
+          <p>В колонке <code>SUSPEND</code> — <code>True</code>, новые Job перестанут появляться. Уже запущенные пауза не трогает — она действует только на будущие запуски.</p>
+        </li>
+        <li>
+          Уберите за собой:
+          <pre><code>kubectl delete cronjob report
+kubectl delete job hello-job fail-job batch-job report-manual --ignore-not-found</code></pre>
+          <p>Удаление CronJob удаляет и созданные им Job, удаление Job — его Pod'ы.</p>
+        </li>
+      </ol>
+
+      <div class="callout win">
+        <span class="callout-label">Если Job по расписанию не появляются</span>
+        Проверьте <code>kubectl describe cronjob report</code> — ошибки в cron-выражении и в <code>timeZone</code> видны в событиях. Убедитесь, что <code>SUSPEND</code> равен <code>False</code>. И помните, что расписание срабатывает в начале минуты: после <code>apply</code> первый Job может появиться не сразу, а через секунды, оставшиеся до следующей минуты.
+      </div>
+
+      <h2>Обратно к KEDA: что такое ScaledJob</h2>
+      <p>В уроке 9 мы упоминали <code>ScaledJob</code> — ресурс KEDA для задач «отработал и завершился». Теперь он читается целиком: это тот же Job, который вы писали сегодня, только создаёт его не расписание и не вы руками, а KEDA — по одному на каждое событие из очереди. Поле <code>jobTargetRef</code> в <code>ScaledJob</code> — это ровно тот <code>spec</code> Job, который вы сегодня писали: <code>template</code>, <code>restartPolicy</code>, <code>backoffLimit</code>. Удобно сравнивать так:</p>
+      <ul>
+        <li><strong>Job</strong> — запуск руками или из CI: «выполни это сейчас»;</li>
+        <li><strong>CronJob</strong> — запуск по времени: «выполняй это каждую ночь»;</li>
+        <li><strong>ScaledJob</strong> — запуск по событию: «выполняй это на каждую задачу в очереди».</li>
+      </ul>
+
+      <div class="callout">
+        <span class="callout-label">Источник</span>
+        <a href="https://keda.sh/docs/2.21/concepts/scaling-jobs/" target="_blank" rel="noopener">KEDA: Scaling Jobs</a> и раздел про <a href="../lessons/0009-hpa-keda-autoscaling.html">ScaledJob в уроке 9</a>
+      </div>
+
+      <h2>Проверьте себя</h2>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">Почему одноразовый скрипт миграции плохо запускать как Deployment?</p>
+        <label class="quiz-option"><input type="radio" name="q1" value="a"> Deployment не умеет запускать Python-скрипты, только HTTP-серверы на порту</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="b" data-correct="true"> Deployment перезапустит завершившийся контейнер, и миграция пойдёт заново</label>
+        <label class="quiz-option"><input type="radio" name="q1" value="c"> Deployment всегда поднимает минимум три реплики одной и той же миграции</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">У Job <code>backoffLimit: 2</code> и <code>restartPolicy: Never</code>, скрипт падает всегда. Сколько Pod'ов вы увидите?</p>
+        <label class="quiz-option"><input type="radio" name="q2" value="a"> Один Pod, контейнер в нём перезапустится два раза подряд</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="b" data-correct="true"> Три Pod'а: первая попытка и ещё две повторные, все в Error</label>
+        <label class="quiz-option"><input type="radio" name="q2" value="c"> Два Pod'а: лимит считает все попытки, включая самую первую</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz" data-quiz="mc">
+        <p class="quiz-question">CronJob запускается каждые 5 минут, а задача иногда идёт 7 минут. Две копии одновременно работать не должны. Что поставить?</p>
+        <label class="quiz-option"><input type="radio" name="q3" value="a"> concurrencyPolicy: Allow — новый запуск дождётся окончания старого</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="b" data-correct="true"> concurrencyPolicy: Forbid — новый запуск пропустится, пока идёт старый</label>
+        <label class="quiz-option"><input type="radio" name="q3" value="c"> concurrencyPolicy: Replace — старый запуск доработает, новый подождёт</label>
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl logs job/hello-job|kubectl logs jobs/hello-job|kubectl logs job.batch/hello-job">
+        <p class="quiz-question">Напишите команду, которая покажет логи Job с именем <code>hello-job</code>:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <div class="quiz quiz-recall" data-quiz="recall" data-answer="kubectl create job report-manual --from=cronjob/report|kubectl create job report-manual --from cronjob/report">
+        <p class="quiz-question">Напишите команду, которая прямо сейчас запустит Job <code>report-manual</code> из шаблона CronJob <code>report</code>:</p>
+        <input type="text" class="quiz-input" placeholder="kubectl ...">
+        <button class="quiz-check">Проверить</button>
+        <p class="quiz-feedback" hidden></p>
+      </div>
+
+      <footer class="sources">
+        <strong>Основные источники для этого урока:</strong> <a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/" target="_blank" rel="noopener">Kubernetes: Jobs</a> · <a href="https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/" target="_blank" rel="noopener">Kubernetes: CronJob</a> · <a href="https://keda.sh/docs/2.21/concepts/scaling-jobs/" target="_blank" rel="noopener">KEDA: Scaling Jobs</a> (официальная документация).
+      </footer>
+
+      <nav class="lesson-nav">
+        <span><a href="../lessons/0009-hpa-keda-autoscaling.html">← Урок 9: HPA и KEDA</a></span>
+        <span>Урок 11 (Логи и отладка) — готовится</span>
+      </nav>
+    </article>
+  </main>
+</div>
+<script src="../assets/nav.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/copy.js"></script>
+</body>
+</html>
